@@ -84,17 +84,17 @@ PROP_GROUP = {
     "Mobile/park home": "Other", "Lodge": "Other", "Houseboat": "Other", "Parking/garage": "Other",
 }
 
-TRAITS = [
-    ("median_price", "Higher median price"),
-    ("Work from Home", "More work-from-home"),
-    ("Cycle", "More cycle commuting"),
-    ("Foot", "More walk commuting"),
-    ("0-5km", "Lives near work (<5km)"),
-    ("High", "Higher qualifications"),
-    ("Low", "Lower qualifications"),
-    ("Minors 0-18", "More children (0-18)"),
-    ("Driving", "More car commuting"),
+# traits compared between the priciest and most affordable areas (all percentages)
+PRICE_TRAITS = [
+    ("High", "Adults with a degree"),
+    ("Work from Home", "Work from home"),
+    ("0-5km", "Live within 5km of work"),
+    ("Cycle", "Cycle to work"),
+    ("Foot", "Walk to work"),
+    ("Driving", "Drive to work"),
 ]
+GROUP_AFFORD = "#eb6834"  # orange - most affordable areas
+GROUP_PRICEY = "#2a78d6"  # blue   - priciest areas
 
 # Key Cambridgeshire landmarks (num, lat, lon, name, one-line effect note). Shown
 # as numbered dots on the map, described in the side key.
@@ -211,32 +211,53 @@ def fig_type_map(df, gdf) -> Path:
     return out
 
 
-# --- 3. volume drivers chart ----------------------------------------------------
-def fig_drivers(df) -> Path:
-    fig = plt.figure(figsize=(11, 8))
-    ax = fig.add_axes([0.30, 0.10, 0.63, 0.74])
-    g = df.groupby("msoa21")
-    cnt = g.size()
-    demo = g.first(numeric_only=True)
-    demo["median_price"] = g["price_sold"].median()
-    rows = sorted(((label, np.corrcoef(cnt.values, demo.loc[cnt.index, col].values)[0, 1])
-                   for col, label in TRAITS), key=lambda t: t[1])
+# --- 3. what makes an area expensive (priciest vs affordable profile) ------------
+def fig_price_profile(df) -> Path:
+    # split the 43 MSOAs into price thirds and average each trait per group
+    demo = [c for c, _ in PRICE_TRAITS]
+    per = df.groupby("msoa21").agg(price=("price_sold", "median"),
+                                   **{c: (c, "first") for c in demo}).sort_values("price")
+    k = len(per) // 3
+    afford, pricey = per.iloc[:k], per.iloc[-k:]
+    rows = [(label, afford[col].mean(), pricey[col].mean()) for col, label in PRICE_TRAITS]
+    rows.sort(key=lambda r: r[2] - r[1])  # biggest "more in cheap areas" at bottom
     labels = [r[0] for r in rows]
-    vals = [r[1] for r in rows]
-    colors = [POS if v >= 0 else NEG for v in vals]
-    ax.barh(labels, vals, color=colors, height=0.72)
-    for y, v in enumerate(vals):
-        ax.text(v + (0.02 if v >= 0 else -0.02), y, f"{v:+.2f}", va="center",
-                ha="left" if v >= 0 else "right", fontsize=10, color=INK_2)
-    ax.axvline(0, color=MUTED, linewidth=0.9)
-    style_axes(ax)
-    ax.set_xlim(-0.62, 0.62); ax.set_xticks([])
-    ax.tick_params(axis="y", labelsize=11, colors=INK_2)
+    y = np.arange(len(rows))
 
-    title_block(fig, "What Marks a High-Volume MSOA",
-                "correlation of an area's traits with its transaction count  ·  blue = busier, red = quieter")
-    footer(fig, "Pearson r across 43 MSOAs  ·  traits are area-level census/commute measures")
-    out = IMAGE_DIR / "cambridgeshire_volume_drivers.png"
+    fig = plt.figure(figsize=(11.5, 7.6))
+    ax = fig.add_axes([0.28, 0.12, 0.66, 0.66])
+    for i, (_, a, p) in enumerate(rows):
+        ax.plot([a, p], [i, i], color=GRID, lw=3, zorder=1, solid_capstyle="round")
+        ax.scatter([a], [i], s=190, color=GROUP_AFFORD, zorder=3, edgecolor="white", linewidth=1.5)
+        ax.scatter([p], [i], s=190, color=GROUP_PRICEY, zorder=3, edgecolor="white", linewidth=1.5)
+        lo, hi = (a, p) if a <= p else (p, a)
+        lo_c, hi_c = (GROUP_AFFORD, GROUP_PRICEY) if a <= p else (GROUP_PRICEY, GROUP_AFFORD)
+        ax.text(lo - 1.1, i, f"{lo:.0f}%", va="center", ha="right", fontsize=10.5,
+                color=lo_c, fontweight="bold")
+        ax.text(hi + 1.1, i, f"{hi:.0f}%", va="center", ha="left", fontsize=10.5,
+                color=hi_c, fontweight="bold")
+    ax.set_yticks(y); ax.set_yticklabels(labels, fontsize=11.5, color=INK)
+    ax.set_ylim(-0.6, len(rows) - 0.4)
+    ax.set_xlim(0, max(p for _, _, p in rows) * 1.35)
+    for side in ("top", "right", "left"):
+        ax.spines[side].set_visible(False)
+    ax.spines["bottom"].set_color(GRID)
+    ax.tick_params(axis="x", colors=MUTED, labelsize=9, length=0)
+    ax.tick_params(axis="y", length=0)
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:.0f}%"))
+    ax.grid(axis="x", color=GRID, linewidth=0.6, alpha=0.6)
+    ax.set_axisbelow(True)
+
+    # legend as two labelled swatches
+    ax.scatter([], [], s=170, color=GROUP_AFFORD, label="Most affordable areas  (~£318k)")
+    ax.scatter([], [], s=170, color=GROUP_PRICEY, label="Priciest areas  (~£447k)")
+    ax.legend(loc="upper left", frameon=False, fontsize=10.5, labelcolor=INK_2,
+              handletextpad=0.4, borderaxespad=0.3)
+
+    title_block(fig, "What Makes an Area Expensive?",
+                "average neighbourhood profile of Cambridgeshire's 14 priciest vs 14 most affordable areas")
+    footer(fig, "Each area = one MSOA (of 43), split into price thirds  ·  figures are area-level census & commute shares")
+    out = IMAGE_DIR / "cambridgeshire_price_drivers.png"
     fig.savefig(out, dpi=220, bbox_inches="tight"); plt.close(fig)
     return out
 
@@ -304,7 +325,7 @@ def main() -> None:
     IMAGE_DIR.mkdir(parents=True, exist_ok=True)
     base_style()
     df, gdf = load()
-    for p in (fig_count_map(df, gdf), fig_type_map(df, gdf), fig_drivers(df),
+    for p in (fig_count_map(df, gdf), fig_type_map(df, gdf), fig_price_profile(df),
               fig_landmarks_map(df, gdf)):
         print(f"Saved {p.relative_to(PROJECT_ROOT)}")
 
