@@ -119,12 +119,12 @@ TOWNS = [
     ("Linton", 52.0980, 0.2840, 9, -6, "left"),
     ("Fulbourn", 52.1780, 0.2220, 9, -8, "left"),
     # the priciest area (£580k median) — labelled so its dark polygon is identified
-    ("Hardwick & Highfields", 52.1852, -0.0128, 0, -34, "center"),
+    ("Hardwick & Highfields", 52.1852, -0.0128, 0, -12, "center"),
 ]
 
 # The two headline landmarks — starred and made prominent ("where we are now").
 SPECIAL = [
-    ("Cambridge University", 52.2043, 0.1160, -40, -34, "right"),
+    ("Cambridge University", 52.2043, 0.1160, 4, -46, "center"),
     ("Isaac Newton Institute", 52.2109, 0.0985, -50, 26, "right"),
 ]
 STAR = "#d4380d"  # strong orange-red for the two headline landmarks
