@@ -330,50 +330,59 @@ def fig_population_map(df, gdf) -> Path:
     return out
 
 
-# --- 6. all 24 property types: price vs 4-year volume ---------------------------
-def fig_type_price_volume(df) -> Path:
-    g = (df.groupby("property_type")
-         .agg(count=("price_sold", "size"), price=("price_sold", "median"))
-         .sort_values("count"))  # ascending -> largest at top of barh
-    y = np.arange(len(g))
-    teal, blue, mute = "#1baf7a", "#2a78d6", "#c9c7bf"
+# --- 6. per-type 4-year trends: price (line) + volume (bars) ---------------------
+YEARS = [2018, 2019, 2020, 2021, 2022]
 
-    fig = plt.figure(figsize=(13.5, 11.5))
-    gs = fig.add_gridspec(1, 2, wspace=0.42, width_ratios=[1, 1],
-                          left=0.20, right=0.965, top=0.85, bottom=0.06)
-    axp = fig.add_subplot(gs[0, 0])
-    axv = fig.add_subplot(gs[0, 1], sharey=axp)
 
-    # left: median price (rare types muted — median unreliable)
-    pcolor = [teal if c >= 30 else mute for c in g["count"]]
-    axp.barh(y, g["price"], color=pcolor, height=0.72)
-    for yi, (pr, c) in enumerate(zip(g["price"], g["count"])):
-        axp.text(pr + g["price"].max() * 0.015, yi, f"£{pr/1000:.0f}k", va="center",
-                 ha="left", fontsize=8.6, color=INK_2 if c >= 30 else MUTED)
-    axp.set_yticks(y); axp.set_yticklabels(g.index, fontsize=9.2, color=INK)
-    axp.set_xlim(0, g["price"].max() * 1.18)
-    axp.set_title("Median sale price", fontsize=11, fontweight="bold", color=INK, pad=10)
+def fig_type_trends(df) -> Path:
+    d = df.copy()
+    d["year"] = pd.to_datetime(d["sold_date"]).dt.year
+    d = d[d["year"].isin(YEARS)]
+    tot = d.groupby("property_type").size().sort_values(ascending=False)
+    keep = [t for t in tot.index if tot[t] >= 100]  # drop the 7 sparse types (zero-sale years)
 
-    # right: 4-year transaction volume
-    axv.barh(y, g["count"], color=blue, height=0.72)
-    for yi, c in enumerate(g["count"]):
-        axv.text(c + g["count"].max() * 0.012, yi, f"{c:,}", va="center", ha="left",
-                 fontsize=8.6, color=INK_2)
-    axv.set_xlim(0, g["count"].max() * 1.16)
-    axv.set_title("Transactions, 2018-2022", fontsize=11, fontweight="bold", color=INK, pad=10)
-    plt.setp(axv.get_yticklabels(), visible=False)
+    ncol, blue, barc = 4, "#2a78d6", "#dfe7d9"
+    nrow = -(-len(keep) // ncol)
+    fig, axes = plt.subplots(nrow, ncol, figsize=(15, 2.9 * nrow))
+    fig.subplots_adjust(left=0.05, right=0.985, top=0.90, bottom=0.075, hspace=0.55, wspace=0.22)
 
-    for ax in (axp, axv):
-        for side in ("top", "right", "left", "bottom"):
+    for i, t in enumerate(keep):
+        ax = axes.flat[i]
+        sub = d[d["property_type"] == t]
+        vol = [int((sub["year"] == y).sum()) for y in YEARS]
+        price = [sub.loc[sub["year"] == y, "price_sold"].median() / 1000 for y in YEARS]
+
+        axb = ax.twinx()                      # volume context bars (kept subordinate)
+        axb.bar(YEARS, vol, width=0.62, color=barc, zorder=1)
+        axb.set_ylim(0, max(vol) * 3.2); axb.axis("off")
+
+        ax.plot(YEARS, price, color=blue, lw=2.2, marker="o", ms=4.5, zorder=3,
+                markeredgecolor="white", markeredgewidth=0.8)
+        ax.text(YEARS[0], price[0], f"£{price[0]:.0f}k", va="bottom", ha="left",
+                fontsize=8, color=INK_2, zorder=4)
+        ax.text(YEARS[-1], price[-1], f"£{price[-1]:.0f}k", va="bottom", ha="right",
+                fontsize=8, fontweight="bold", color=INK, zorder=4)
+        ax.set_title(f"{t}  ·  n={int(tot[t]):,}", fontsize=9.5, fontweight="bold",
+                     color=INK, loc="left", pad=6)
+        ax.set_zorder(axb.get_zorder() + 1); ax.patch.set_visible(False)
+        ax.set_xticks(YEARS)
+        ax.set_xticklabels(["'18", "'19", "'20", "'21", "'22"], fontsize=8, color=MUTED)
+        ax.set_xlim(2017.6, 2022.4)
+        ax.set_ylim(min(price) * 0.85, max(price) * 1.18)
+        ax.set_yticks([])
+        for side in ("top", "right", "left"):
             ax.spines[side].set_visible(False)
-        ax.tick_params(axis="x", length=0, labelbottom=False)
-        ax.tick_params(axis="y", length=0)
+        ax.spines["bottom"].set_color(GRID)
+        ax.tick_params(length=0)
 
-    title_block(fig, "24 Property Types — Price vs 4-Year Sales Volume",
-                "median sale price (left) and total transactions 2018-2022 (right), most common at top")
-    footer(fig, "Grey price bars = fewer than 30 sales, so the median is unreliable (Lodge, Parking/garage, Farmhouse, Houseboat)")
-    out = IMAGE_DIR / "cambridgeshire_type_price_volume.png"
-    fig.savefig(out, dpi=220, bbox_inches="tight"); plt.close(fig)
+    for j in range(len(keep), nrow * ncol):
+        axes.flat[j].axis("off")
+
+    title_block(fig, "How Each Property Type Changed, 2018-2022",
+                "median sale price (line, £000s) and yearly sales volume (bars) per type  ·  17 types with enough data")
+    footer(fig, "Yearly totals partly reflect data coverage (2019 over-represented, 2022 to March only)  ·  7 rare types with zero-sale years omitted")
+    out = IMAGE_DIR / "cambridgeshire_type_trends.png"
+    fig.savefig(out, dpi=200, bbox_inches="tight"); plt.close(fig)
     return out
 
 
@@ -393,7 +402,7 @@ def main() -> None:
     df, gdf = load()
     for p in (fig_count_map(df, gdf), fig_type_map(df, gdf), fig_price_profile(df),
               fig_price_map(df, gdf), fig_population_map(df, gdf),
-              fig_type_price_volume(df)):
+              fig_type_trends(df)):
         print(f"Saved {p.relative_to(PROJECT_ROOT)}")
 
 
