@@ -118,6 +118,8 @@ TOWNS = [
     ("Melbourn", 52.0820, 0.0220, 0, -12, "center"),
     ("Linton", 52.0980, 0.2840, 9, -6, "left"),
     ("Fulbourn", 52.1780, 0.2220, 9, -8, "left"),
+    # the priciest area (£580k median) — labelled so its dark polygon is identified
+    ("Hardwick & Highfields", 52.1852, -0.0128, 0, -34, "center"),
 ]
 
 # The two headline landmarks — starred and made prominent ("where we are now").
