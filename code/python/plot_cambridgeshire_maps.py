@@ -330,6 +330,53 @@ def fig_population_map(df, gdf) -> Path:
     return out
 
 
+# --- 6. all 24 property types: price vs 4-year volume ---------------------------
+def fig_type_price_volume(df) -> Path:
+    g = (df.groupby("property_type")
+         .agg(count=("price_sold", "size"), price=("price_sold", "median"))
+         .sort_values("count"))  # ascending -> largest at top of barh
+    y = np.arange(len(g))
+    teal, blue, mute = "#1baf7a", "#2a78d6", "#c9c7bf"
+
+    fig = plt.figure(figsize=(13.5, 11.5))
+    gs = fig.add_gridspec(1, 2, wspace=0.42, width_ratios=[1, 1],
+                          left=0.20, right=0.965, top=0.85, bottom=0.06)
+    axp = fig.add_subplot(gs[0, 0])
+    axv = fig.add_subplot(gs[0, 1], sharey=axp)
+
+    # left: median price (rare types muted — median unreliable)
+    pcolor = [teal if c >= 30 else mute for c in g["count"]]
+    axp.barh(y, g["price"], color=pcolor, height=0.72)
+    for yi, (pr, c) in enumerate(zip(g["price"], g["count"])):
+        axp.text(pr + g["price"].max() * 0.015, yi, f"£{pr/1000:.0f}k", va="center",
+                 ha="left", fontsize=8.6, color=INK_2 if c >= 30 else MUTED)
+    axp.set_yticks(y); axp.set_yticklabels(g.index, fontsize=9.2, color=INK)
+    axp.set_xlim(0, g["price"].max() * 1.18)
+    axp.set_title("Median sale price", fontsize=11, fontweight="bold", color=INK, pad=10)
+
+    # right: 4-year transaction volume
+    axv.barh(y, g["count"], color=blue, height=0.72)
+    for yi, c in enumerate(g["count"]):
+        axv.text(c + g["count"].max() * 0.012, yi, f"{c:,}", va="center", ha="left",
+                 fontsize=8.6, color=INK_2)
+    axv.set_xlim(0, g["count"].max() * 1.16)
+    axv.set_title("Transactions, 2018-2022", fontsize=11, fontweight="bold", color=INK, pad=10)
+    plt.setp(axv.get_yticklabels(), visible=False)
+
+    for ax in (axp, axv):
+        for side in ("top", "right", "left", "bottom"):
+            ax.spines[side].set_visible(False)
+        ax.tick_params(axis="x", length=0, labelbottom=False)
+        ax.tick_params(axis="y", length=0)
+
+    title_block(fig, "24 Property Types — Price vs 4-Year Sales Volume",
+                "median sale price (left) and total transactions 2018-2022 (right), most common at top")
+    footer(fig, "Grey price bars = fewer than 30 sales, so the median is unreliable (Lodge, Parking/garage, Farmhouse, Houseboat)")
+    out = IMAGE_DIR / "cambridgeshire_type_price_volume.png"
+    fig.savefig(out, dpi=220, bbox_inches="tight"); plt.close(fig)
+    return out
+
+
 def base_style() -> None:
     mpl.rcParams.update({
         "font.family": "sans-serif",
@@ -345,7 +392,8 @@ def main() -> None:
     base_style()
     df, gdf = load()
     for p in (fig_count_map(df, gdf), fig_type_map(df, gdf), fig_price_profile(df),
-              fig_price_map(df, gdf), fig_population_map(df, gdf)):
+              fig_price_map(df, gdf), fig_population_map(df, gdf),
+              fig_type_price_volume(df)):
         print(f"Saved {p.relative_to(PROJECT_ROOT)}")
 
 
