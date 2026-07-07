@@ -36,6 +36,7 @@ DATA_DIR = PROJECT_ROOT / "data"
 IMAGE_DIR = PROJECT_ROOT / "image"
 
 CLEANED = DATA_DIR / "cleaned" / "Cambridge data_cleaned.csv"
+POPULATION = DATA_DIR / "spatial" / "msoa_population_mid2022.csv"
 BOUNDARIES = (
     DATA_DIR
     / "spatial"
@@ -96,24 +97,35 @@ PRICE_TRAITS = [
 GROUP_AFFORD = "#eb6834"  # orange - most affordable areas
 GROUP_PRICEY = "#2a78d6"  # blue   - priciest areas
 
-# Key Cambridgeshire landmarks (num, lat, lon, name, one-line effect note). Shown
-# as numbered dots on the map, described in the side key.
-LANDMARKS = [
-    (1, 52.2045, 0.1170, "University of Cambridge", "historic colleges: priciest, low turnover"),
-    (2, 52.1745, 0.1400, "Biomedical Campus", "Addenbrooke's: major employer, south"),
-    (3, 52.2320, 0.1490, "Cambridge Science Park", "'Silicon Fen' tech jobs, north"),
-    (4, 52.2220, -0.0730, "Cambourne", "new town: new-build boom, top volume"),
-    (5, 52.3990, 0.2620, "Ely", "cathedral commuter city (East Cambs)"),
-    (6, 52.3330, 0.3360, "Soham", "affordable market town, high turnover"),
-    (7, 52.4620, 0.3050, "Littleport", "cheapest, high-volume town (north)"),
-    (8, 52.1850, -0.0050, "West villages", "Grantchester/Comberton: £580k, low turnover"),
+VIOLET_RAMP = LinearSegmentedColormap.from_list(
+    "cam_violet",
+    ["#f0ecfb", "#ddd0f3", "#c2ade8", "#a385db", "#845fcc", "#653fb0", "#4c2c8f", "#35206b"],
+)
+
+# Real towns to label on every map: (name, lat, lon, dx, dy, ha) — dx/dy are the
+# label offset in points from the dot, hand-tuned so labels sit clear of one another.
+TOWNS = [
+    ("Cambridge", 52.2053, 0.1218, 16, 10, "left"),
+    ("Ely", 52.3993, 0.2626, 10, 8, "left"),
+    ("Soham", 52.3330, 0.3363, 10, 6, "left"),
+    ("Littleport", 52.4568, 0.3046, 10, 8, "left"),
+    ("Cambourne", 52.2200, -0.0730, -10, 6, "right"),
+    ("Sawston", 52.1210, 0.1690, 9, -9, "left"),
+    ("Waterbeach", 52.2670, 0.1920, 9, 7, "left"),
+    ("Cottenham", 52.2880, 0.1270, 0, 11, "center"),
+    ("Burwell", 52.2750, 0.3280, 9, 6, "left"),
+    ("Bar Hill", 52.2480, -0.0430, -9, 7, "right"),
+    ("Melbourn", 52.0820, 0.0220, 0, -12, "center"),
+    ("Linton", 52.0980, 0.2840, 9, -6, "left"),
+    ("Fulbourn", 52.1780, 0.2220, 9, -8, "left"),
 ]
 
-REGION_NOTES = [
-    ("Cambridge city  (14 MSOAs)", "high price · flat-heavy · low turnover"),
-    ("South Cambs  (19 MSOAs)", "commuter villages + new towns (Cambourne)"),
-    ("East Cambs  (10 MSOAs)", "affordable market towns: Ely, Soham, Littleport"),
+# The two headline landmarks — starred and made prominent ("where we are now").
+SPECIAL = [
+    ("Cambridge University", 52.2043, 0.1160, -40, -34, "right"),
+    ("Isaac Newton Institute", 52.2109, 0.0985, -50, 26, "right"),
 ]
+STAR = "#d4380d"  # strong orange-red for the two headline landmarks
 
 
 def style_axes(ax) -> None:
@@ -132,13 +144,27 @@ def footer(fig, text) -> None:
     fig.text(0.03, 0.02, text, fontsize=8.5, color=MUTED)
 
 
-def label_top(ax, gdf, n, *, color="white", stroke="#0d366b") -> None:
-    for _, row in gdf.sort_values("count", ascending=False).head(n).iterrows():
-        pt = row.geometry.representative_point()
-        ax.annotate(f"{row['short']}\n{int(row['count']):,}", (pt.x, pt.y),
-                    ha="center", va="center", fontsize=8, fontweight="bold",
-                    color=color, linespacing=1.05,
-                    path_effects=[path_effects.withStroke(linewidth=2.4, foreground=stroke)])
+def _project(items):
+    """Project a list of (name, lat, lon, ...) to EPSG:27700 points."""
+    lon = [t[2] for t in items]
+    lat = [t[1] for t in items]
+    return gpd.GeoDataFrame(geometry=gpd.points_from_xy(lon, lat), crs="EPSG:4326").to_crs(27700)
+
+
+def annotate_places(ax) -> None:
+    """Label the main towns (dots) plus the two headline landmarks (stars)."""
+    halo = [path_effects.withStroke(linewidth=3, foreground=SURFACE)]
+    for (name, la, lo, dx, dy, ha), geom in zip(TOWNS, _project(TOWNS).geometry):
+        ax.plot(geom.x, geom.y, "o", ms=5, mfc=INK, mec="white", mew=0.8, zorder=6)
+        ax.annotate(name, (geom.x, geom.y), xytext=(dx, dy), textcoords="offset points",
+                    ha=ha, va="center", fontsize=9.5, fontweight="bold", color=INK,
+                    zorder=7, path_effects=halo)
+    for (name, la, lo, dx, dy, ha), geom in zip(SPECIAL, _project(SPECIAL).geometry):
+        ax.plot(geom.x, geom.y, marker="*", ms=22, mfc=STAR, mec="white", mew=1.4, zorder=8)
+        ax.annotate(name, (geom.x, geom.y), xytext=(dx, dy), textcoords="offset points",
+                    ha=ha, va="center", fontsize=10.5, fontweight="bold", color=STAR, zorder=9,
+                    arrowprops=dict(arrowstyle="-", color=STAR, lw=1.1, shrinkA=0, shrinkB=6),
+                    path_effects=halo)
 
 
 def load() -> tuple[pd.DataFrame, gpd.GeoDataFrame]:
@@ -153,32 +179,22 @@ def load() -> tuple[pd.DataFrame, gpd.GeoDataFrame]:
     )
     per["dominant"] = df.groupby("msoa21")["grp"].agg(lambda s: s.value_counts().idxmax())
 
+    pop = pd.read_csv(POPULATION).set_index("msoa21")["population_2022"]
+
     gdf = gpd.read_file(BOUNDARIES, columns=["MSOA21CD", "MSOA21NM", "geometry"])
     gdf = gdf[gdf["MSOA21CD"].isin(per.index)].copy()
     gdf = gdf.merge(per, left_on="MSOA21CD", right_index=True).to_crs(epsg=27700)
-    gdf["short"] = (gdf["MSOA21NM"]
-                    .str.replace("South Cambridgeshire", "S. Cambs", regex=False)
-                    .str.replace("East Cambridgeshire", "E. Cambs", regex=False))
+    gdf["population"] = gdf["MSOA21CD"].map(pop)
+    gdf["density"] = gdf["population"] / (gdf.geometry.area / 1e6)  # residents per km^2
     return df, gdf
 
 
 # --- 1. transaction count map ---------------------------------------------------
 def fig_count_map(df, gdf) -> Path:
-    fig = plt.figure(figsize=(12, 12.8))
-    ax = fig.add_axes([0.02, 0.05, 0.96, 0.83])
-    vmax = gdf["count"].max()
-    gdf.plot(ax=ax, column="count", cmap=BLUE_RAMP, norm=Normalize(0, vmax),
-             linewidth=0.6, edgecolor="white")
-    ax.set_axis_off(); ax.set_aspect("equal")
-    label_top(ax, gdf, 8)
-
-    sm = plt.cm.ScalarMappable(cmap=BLUE_RAMP, norm=Normalize(0, vmax))
-    cb = fig.colorbar(sm, ax=ax, orientation="horizontal", fraction=0.04, pad=0.02, shrink=0.72)
-    cb.set_label("Transactions per MSOA", color=INK_2, fontsize=10)
-    cb.outline.set_visible(False)
-    cb.ax.tick_params(colors=MUTED, labelsize=9, length=0)
-
-    title_block(fig, "Where the Sales Are — Transactions by MSOA",
+    norm = Normalize(0, gdf["count"].max())
+    fig, ax = _choropleth(gdf, "count", BLUE_RAMP, norm)
+    _hbar(fig, BLUE_RAMP, norm, "Transactions per area", lambda v, _: f"{v:,.0f}")
+    title_block(fig, "Where the Sales Are — Transactions by Area",
                 f"{len(df):,} recorded sales (2018-2022) across {gdf.shape[0]} areas  ·  darker = more transactions")
     footer(fig, "Boundaries: ONS MSOA 2021  ·  EPSG:27700")
     out = IMAGE_DIR / "cambridgeshire_transaction_count_map.png"
@@ -196,6 +212,7 @@ def fig_type_map(df, gdf) -> Path:
                               norm=BoundaryNorm(range(len(TYPE_ORDER) + 1), cmap.N),
                               linewidth=0.6, edgecolor="white")
     ax.set_axis_off(); ax.set_aspect("equal")
+    annotate_places(ax)
 
     handles = [Patch(facecolor=TYPE_COLOR[t], label=t) for t in TYPE_ORDER]
     ax.legend(handles=handles, loc="lower left", frameon=False, fontsize=11,
@@ -203,7 +220,7 @@ def fig_type_map(df, gdf) -> Path:
               labelcolor=INK_2, handlelength=1.2)
     ax.get_legend().get_title().set_color(INK)
 
-    title_block(fig, "Housing Character — Dominant Dwelling Type by MSOA",
+    title_block(fig, "Housing Character — Dominant Dwelling Type by Area",
                 "the most-sold property type in each area  ·  flats cluster in the city, detached homes in the countryside")
     footer(fig, "Types grouped from 24 raw categories  ·  Boundaries: ONS MSOA 2021  ·  EPSG:27700")
     out = IMAGE_DIR / "cambridgeshire_property_type_map.png"
@@ -262,51 +279,51 @@ def fig_price_profile(df) -> Path:
     return out
 
 
-# --- 4. region + landmarks price map --------------------------------------------
-def fig_landmarks_map(df, gdf) -> Path:
-    fig = plt.figure(figsize=(16, 12.5))
-    ax = fig.add_axes([0.36, 0.05, 0.60, 0.82])  # map on the right
-    vmin, vmax = gdf["median_price"].min(), gdf["median_price"].max()
-    gdf.plot(ax=ax, column="median_price", cmap=TEAL_RAMP, norm=Normalize(vmin, vmax),
-             linewidth=0.6, edgecolor="white")
+def _choropleth(gdf, column, cmap, norm):
+    """Shared full-bleed map canvas with town/landmark labels; returns (fig, ax)."""
+    fig = plt.figure(figsize=(12, 12.8))
+    ax = fig.add_axes([0.02, 0.10, 0.96, 0.78])
+    gdf.plot(ax=ax, column=column, cmap=cmap, norm=norm, linewidth=0.6, edgecolor="white")
     ax.set_axis_off(); ax.set_aspect("equal")
+    annotate_places(ax)
+    return fig, ax
 
-    # numbered landmark dots, projected to the map CRS
-    lon = [m[2] for m in LANDMARKS]
-    lat = [m[1] for m in LANDMARKS]
-    gp = gpd.GeoDataFrame(geometry=gpd.points_from_xy(lon, lat), crs="EPSG:4326").to_crs(27700)
-    for (num, *_), geom in zip(LANDMARKS, gp.geometry):
-        ax.plot(geom.x, geom.y, "o", ms=15, mfc=ACCENT, mec="white", mew=1.8, zorder=5)
-        ax.annotate(str(num), (geom.x, geom.y), ha="center", va="center",
-                    fontsize=9, fontweight="bold", color="white", zorder=6)
 
-    sm = plt.cm.ScalarMappable(cmap=TEAL_RAMP, norm=Normalize(vmin, vmax))
-    cb = fig.colorbar(sm, ax=ax, orientation="vertical", fraction=0.035, pad=0.01, shrink=0.5)
-    cb.set_label("Median sale price", color=INK_2, fontsize=10)
+def _hbar(fig, cmap, norm, label, fmt):
+    """Horizontal colorbar in a fixed axes above the footer (no overlap)."""
+    cax = fig.add_axes([0.28, 0.072, 0.44, 0.014])
+    cb = fig.colorbar(plt.cm.ScalarMappable(cmap=cmap, norm=norm), cax=cax,
+                      orientation="horizontal")
+    cb.set_label(label, color=INK_2, fontsize=10)
     cb.outline.set_visible(False)
-    cb.ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"£{v/1000:.0f}k"))
+    cb.ax.xaxis.set_major_formatter(FuncFormatter(fmt))
     cb.ax.tick_params(colors=MUTED, labelsize=9, length=0)
 
-    # --- left panel: key + regional character (fig coords, clear of the map) ---
-    fig.text(0.03, 0.86, "KEY LANDMARKS", fontsize=12, fontweight="bold", color=INK)
-    y = 0.825
-    for num, la, lo, name, note in LANDMARKS:
-        fig.text(0.03, y, f"{num}", fontsize=10.5, fontweight="bold", color=ACCENT)
-        fig.text(0.055, y, name, fontsize=10.5, fontweight="bold", color=INK_2)
-        fig.text(0.055, y - 0.022, note, fontsize=8.8, color=MUTED)
-        y -= 0.05
 
-    fig.text(0.03, y - 0.01, "REGIONAL CHARACTER", fontsize=12, fontweight="bold", color=INK)
-    y -= 0.05
-    for head, note in REGION_NOTES:
-        fig.text(0.03, y, head, fontsize=10, fontweight="bold", color=INK_2)
-        fig.text(0.03, y - 0.022, note, fontsize=8.8, color=MUTED)
-        y -= 0.052
+# --- 4. median price map --------------------------------------------------------
+def fig_price_map(df, gdf) -> Path:
+    norm = Normalize(gdf["median_price"].min(), gdf["median_price"].max())
+    fig, ax = _choropleth(gdf, "median_price", TEAL_RAMP, norm)
+    _hbar(fig, TEAL_RAMP, norm, "Median sale price", lambda v, _: f"£{v/1000:.0f}k")
+    title_block(fig, "House Prices across Cambridgeshire",
+                "median sale price by area (2018-2022)  ·  priciest in Cambridge & the villages west of the city")
+    footer(fig, "Price = median of recorded sales  ·  Boundaries: ONS MSOA 2021  ·  EPSG:27700")
+    out = IMAGE_DIR / "cambridgeshire_price_map.png"
+    fig.savefig(out, dpi=220, bbox_inches="tight"); plt.close(fig)
+    return out
 
-    title_block(fig, "Why Prices & Sales Differ — Regions & Landmarks",
-                "median sale price by MSOA, with the employers, towns and villages that shape demand")
-    footer(fig, "Landmark positions approximate  ·  price = median of recorded sales 2018-2022  ·  ONS MSOA 2021  ·  EPSG:27700")
-    out = IMAGE_DIR / "cambridgeshire_region_landmarks_map.png"
+
+# --- 5. population density map (official ONS mid-2022) --------------------------
+def fig_population_map(df, gdf) -> Path:
+    norm = Normalize(0, gdf["density"].max())
+    fig, ax = _choropleth(gdf, "density", VIOLET_RAMP, norm)
+    _hbar(fig, VIOLET_RAMP, norm, "Residents per km² (mid-2022)",
+          lambda v, _: f"{v/1000:.0f}k" if v >= 1000 else f"{v:.0f}")
+    total = int(gdf["population"].sum())
+    title_block(fig, "Where People Live — Population Density",
+                f"{total:,} residents (ONS mid-2022) across {gdf.shape[0]} areas  ·  packed into Cambridge, sparse in the fens & countryside")
+    footer(fig, "Population: ONS mid-2022 MSOA estimates (Nomis NM_2014_1)  ·  density = residents / land area  ·  ONS MSOA 2021  ·  EPSG:27700")
+    out = IMAGE_DIR / "cambridgeshire_population_map.png"
     fig.savefig(out, dpi=220, bbox_inches="tight"); plt.close(fig)
     return out
 
@@ -326,7 +343,7 @@ def main() -> None:
     base_style()
     df, gdf = load()
     for p in (fig_count_map(df, gdf), fig_type_map(df, gdf), fig_price_profile(df),
-              fig_landmarks_map(df, gdf)):
+              fig_price_map(df, gdf), fig_population_map(df, gdf)):
         print(f"Saved {p.relative_to(PROJECT_ROOT)}")
 
 
