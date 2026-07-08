@@ -35,8 +35,19 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
 IMAGE_DIR = PROJECT_ROOT / "image"
 
-CLEANED = DATA_DIR / "cleaned" / "Cambridge data_cleaned.csv"
+CLEANED = DATA_DIR / "cleaned" / "Cambridge_data_cleaned.csv"
 POPULATION = DATA_DIR / "spatial" / "msoa_population_mid2022.csv"
+NAMES = DATA_DIR / "spatial" / "msoa_names.csv"
+
+# the cleaned file now uses R-style column names + distance columns; map back to the
+# names used throughout this script.
+COL_RENAME = {
+    "Minors.0.18": "Minors 0-18", "Adults.18.60": "Adults 18-60", "Elders..60": "Elders >60",
+    "X0.5km": "0-5km", "X5.30km": "5-30km", "X.30km": ">30km",
+    "Work.from.Home..0km.": "Work from Home (0km)", "Living.Offshore": "Living Offshore",
+    "Other.Qualification": "Other Qualification", "Work.from.Home": "Work from Home",
+    "City.Public": "City Public", "Other.Method": "Other Method",
+}
 BOUNDARIES = (
     DATA_DIR
     / "spatial"
@@ -170,7 +181,7 @@ def annotate_places(ax) -> None:
 
 
 def load() -> tuple[pd.DataFrame, gpd.GeoDataFrame]:
-    df = pd.read_csv(CLEANED)
+    df = pd.read_csv(CLEANED).rename(columns=COL_RENAME)
     df["grp"] = df["property_type"].map(PROP_GROUP)
 
     demo = ["Work from Home", "Cycle", "Foot", "0-5km", "High", "Low", "Minors 0-18", "Driving"]
@@ -565,6 +576,153 @@ def fig_sales_timeline(df) -> Path:
     return out
 
 
+SOCIAL_VARS = ["Asian", "Black", "Mixed", "White", "Other", "Minors 0-18", "Adults 18-60",
+               "Elders >60", "0-5km", "5-30km", ">30km", "Work from Home (0km)",
+               "Living Offshore", "Low", "Medium", "High", "Other Qualification",
+               "Work from Home", "City Public", "Rail", "Cycle", "Driving", "Foot", "Other Method"]
+SOCIAL_LABEL = {
+    "Work from Home (0km)": "Work from home (commute band)", "Work from Home": "Work from home (travel)",
+    "Low": "Low qualifications", "High": "Degree-level qualifications",
+    "Living Offshore": "Offshore workers", "Driving": "Drives to work",
+    "Other Qualification": "Other qualifications", ">30km": "Commutes >30 km",
+    "5-30km": "Commutes 5-30 km"}
+
+
+def fig_social_vs_location(df) -> Path:
+    """Show that the strong social→price correlations are absorbed by the two
+    location distances — justifying a property+location model with no social features."""
+    price = df["price_sold"].to_numpy(float)
+    L = np.column_stack([np.ones(len(df)), df["dist_london"].to_numpy(float),
+                         df["dist_cambridge"].to_numpy(float)])
+
+    def resid(y):
+        beta, *_ = np.linalg.lstsq(L, y, rcond=None)
+        return y - L @ beta
+
+    rp = resid(price)
+    rows = []
+    for s in SOCIAL_VARS:
+        x = df[s].to_numpy(float)
+        raw = np.corrcoef(x, price)[0, 1]
+        part = np.corrcoef(resid(x), rp)[0, 1]
+        rows.append((s, abs(raw), abs(part)))
+    strong = sorted([r for r in rows if r[1] >= 0.15], key=lambda r: r[1])
+    labels = [SOCIAL_LABEL.get(s, s) for s, _, _ in strong]
+    raw_abs = [r[1] for r in strong]
+    part_abs = [r[2] for r in strong]
+    y = np.arange(len(strong))
+    avg_expl = np.mean([(1 - p / r) * 100 for _, r, p in strong])
+
+    fig, ax = plt.subplots(figsize=(12.5, 7.4))
+    fig.subplots_adjust(left=0.28, right=0.955, top=0.80, bottom=0.11)
+    for i in y:
+        ax.plot([part_abs[i], raw_abs[i]], [i, i], color="#dfe3ea", lw=3.5, zorder=1,
+                solid_capstyle="round")
+    ax.scatter(part_abs, y, s=150, color="#c9c7bf", zorder=3, edgecolor="white", linewidth=1)
+    ax.scatter(raw_abs, y, s=160, color="#2a78d6", zorder=3, edgecolor="white", linewidth=1)
+    for i in y:
+        ax.text(raw_abs[i] + 0.006, i, f"{raw_abs[i]:.2f}", va="center", ha="left",
+                fontsize=8.8, color="#2a78d6", fontweight="bold")
+        ax.text(part_abs[i] - 0.006, i, f"{part_abs[i]:.2f}", va="center", ha="right",
+                fontsize=8.8, color=MUTED)
+    ax.set_yticks(y); ax.set_yticklabels(labels, fontsize=10, color=INK)
+    ax.set_ylim(-0.6, len(strong) - 0.4)
+    ax.set_xlim(0, max(raw_abs) * 1.22)
+    _bare(ax); ax.tick_params(axis="y", length=0)
+    ax.set_xlabel("Correlation with sale price (strength, |r|)", fontsize=10, color=INK_2)
+
+    ax.scatter([], [], s=150, color="#2a78d6", label="correlation with price on its own")
+    ax.scatter([], [], s=150, color="#c9c7bf", label="after removing distance to Cambridge & London")
+    ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=2, frameon=False,
+              fontsize=10, labelcolor=INK_2, columnspacing=2.2, handletextpad=0.5)
+
+    title_block(fig, "Location Already Carries the Social Signal",
+                f"each strong social trait's link to price collapses ~{avg_expl:.0f}% once the two distances are known — so a property + location model keeps the signal without any social variables")
+    footer(fig, "Blue = raw |correlation| with price; grey = partial |correlation| after controlling for dist_london & dist_cambridge  ·  the gap is what location already explains")
+    out = IMAGE_DIR / "cambridgeshire_social_vs_location.png"
+    fig.savefig(out, dpi=200, bbox_inches="tight"); plt.close(fig)
+    return out
+
+
+def fig_price_correlation_rank(df) -> Path:
+    price = df["price_sold"].to_numpy(float)
+    feats = [("num_bed_", "Bedrooms", "Property"), ("num_bath", "Bathrooms", "Property"),
+             ("num_reception", "Receptions", "Property"),
+             ("dist_cambridge", "Distance to Cambridge", "Location"),
+             ("dist_london", "Distance to London", "Location")]
+    feats += [(s, SOCIAL_LABEL.get(s, s), "Social") for s in SOCIAL_VARS]
+    rows = [(label, cat, np.corrcoef(df[col].to_numpy(float), price)[0, 1])
+            for col, label, cat in feats]
+    rows.sort(key=lambda t: abs(t[2]))
+    labels = [r[0] for r in rows]
+    vals = [r[2] for r in rows]
+    catcol = {"Property": "#2a78d6", "Location": "#1baf7a", "Social": "#c9c7bf"}
+    colors = [catcol[r[1]] for r in rows]
+    y = np.arange(len(rows))
+
+    fig, ax = plt.subplots(figsize=(12, 11))
+    fig.subplots_adjust(left=0.30, right=0.93, top=0.855, bottom=0.06)
+    ax.barh(y, [abs(v) for v in vals], color=colors, height=0.76)
+    for i, v in enumerate(vals):
+        ax.text(abs(v) + 0.004, i, f"{v:+.2f}", va="center", ha="left", fontsize=8.8, color=INK_2)
+    ax.set_yticks(y); ax.set_yticklabels(labels, fontsize=9.4, color=INK)
+    ax.set_xlim(0, max(abs(v) for v in vals) * 1.16)
+    _bare(ax); ax.set_xlabel("Correlation with sale price  (|r|; sign on the label)", fontsize=10, color=INK_2)
+    handles = [Patch(color=catcol[c], label=c) for c in ("Property", "Location", "Social")]
+    leg = ax.legend(handles=handles, loc="lower right", frameon=False, fontsize=10.5,
+                    labelcolor=INK_2, title="Feature type", title_fontsize=10)
+    leg.get_title().set_color(INK)
+    title_block(fig, "What Correlates Most with Price",
+                "every feature ranked by its correlation with sale price  ·  the model uses Property + Location only (Social shown for context)")
+    footer(fig, "Pearson r across all sales  ·  bedrooms lead; the two distances rank near the top; excluded social traits are proxied by location")
+    out = IMAGE_DIR / "cambridgeshire_price_correlation_rank.png"
+    fig.savefig(out, dpi=200, bbox_inches="tight"); plt.close(fig)
+    return out
+
+
+def fig_area_type_consistency(df) -> Path:
+    names = pd.read_csv(NAMES).set_index("msoa21")["name"]
+    groups = ["Detached", "Semi-detached", "Terraced", "Flat/Apartment", "Bungalow"]
+    d = df[df["grp"].isin(groups)]
+    agg = d.groupby(["msoa21", "grp"])["price_sold"].agg(["median", "size"]).reset_index()
+    agg = agg[agg["size"] >= 5]
+    mat = agg.pivot(index="msoa21", columns="grp", values="median").reindex(columns=groups)
+    pct = mat.rank(pct=True) * 100
+    order = pct.mean(axis=1).sort_values(ascending=False).index
+    mat, pct = mat.loc[order], pct.loc[order]
+    rowlabels = [names.get(c, c) for c in order]
+
+    corr = mat.rank().corr(method="spearman").values
+    iu = np.triu_indices(len(groups), 1)
+    avg_r = np.nanmean(corr[iu])
+
+    cmap = TEAL_RAMP.copy(); cmap.set_bad("#ececec")
+    fig, ax = plt.subplots(figsize=(9.5, 14))
+    fig.subplots_adjust(left=0.24, right=0.98, top=0.90, bottom=0.05)
+    im = ax.imshow(np.ma.masked_invalid(pct.values), cmap=cmap, aspect="auto", vmin=0, vmax=100)
+    for i in range(mat.shape[0]):
+        for j in range(mat.shape[1]):
+            v = mat.values[i, j]
+            if not np.isnan(v):
+                ax.text(j, i, f"{v/1000:.0f}", ha="center", va="center", fontsize=6.6,
+                        color="white" if pct.values[i, j] >= 55 else INK_2)
+    ax.set_xticks(range(len(groups))); ax.set_xticklabels(groups, fontsize=9.5, color=INK)
+    ax.xaxis.tick_top()
+    ax.set_yticks(range(len(order))); ax.set_yticklabels(rowlabels, fontsize=7.4, color=INK)
+    ax.tick_params(length=0)
+    for sp in ax.spines.values():
+        sp.set_visible(False)
+    cb = fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02)
+    cb.set_label("Area's price rank within each type (percentile)", color=INK_2, fontsize=9.5)
+    cb.outline.set_visible(False); cb.ax.tick_params(colors=MUTED, length=0, labelsize=8.5)
+    title_block(fig, "Is an Expensive Area Expensive for Every Property Type?",
+                f"median price (£000s) by area & type; shading = the area's rank within that type. Rows stay one colour → mostly yes (avg rank r = {avg_r:.2f})")
+    footer(fig, "Areas sorted most→least expensive (top→bottom)  ·  cells need ≥5 sales, grey = too few  ·  ONS MSOA 2021")
+    out = IMAGE_DIR / "cambridgeshire_area_type_consistency.png"
+    fig.savefig(out, dpi=200, bbox_inches="tight"); plt.close(fig)
+    return out
+
+
 def base_style() -> None:
     mpl.rcParams.update({
         "font.family": "sans-serif",
@@ -584,6 +742,7 @@ def main() -> None:
         fig_price_map(df, gdf), fig_population_map(df, gdf), fig_type_trends(df),
         fig_price_distribution(df), fig_price_by_bedrooms(df), fig_correlation_heatmap(df),
         fig_price_by_type_box(df), fig_price_per_bed_map(df, gdf), fig_sales_timeline(df),
+        fig_social_vs_location(df), fig_price_correlation_rank(df), fig_area_type_consistency(df),
     ]
     for p in figs:
         print(f"Saved {p.relative_to(PROJECT_ROOT)}")
