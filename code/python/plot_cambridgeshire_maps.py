@@ -45,7 +45,7 @@ COL_RENAME = {
     "Minors.0.18": "Minors 0-18", "Adults.18.60": "Adults 18-60", "Elders..60": "Elders >60",
     "X0.5km": "0-5km", "X5.30km": "5-30km", "X.30km": ">30km",
     "Work.from.Home..0km.": "Work from Home (0km)", "Living.Offshore": "Living Offshore",
-    "Other.Qualification": "Other Qualification", "Work.from.Home": "Work from Home",
+    "Other.Qualification": "Other Qualification",
     "City.Public": "City Public", "Other.Method": "Other Method",
 }
 BOUNDARIES = (
@@ -99,7 +99,7 @@ PROP_GROUP = {
 # traits compared between the priciest and most affordable areas (all percentages)
 PRICE_TRAITS = [
     ("High", "Adults with a degree"),
-    ("Work from Home", "Work from home"),
+    ("Work from Home (0km)", "Work from home"),
     ("0-5km", "Live within 5km of work"),
     ("Cycle", "Cycle to work"),
     ("Foot", "Walk to work"),
@@ -184,7 +184,7 @@ def load() -> tuple[pd.DataFrame, gpd.GeoDataFrame]:
     df = pd.read_csv(CLEANED).rename(columns=COL_RENAME)
     df["grp"] = df["property_type"].map(PROP_GROUP)
 
-    demo = ["Work from Home", "Cycle", "Foot", "0-5km", "High", "Low", "Minors 0-18", "Driving"]
+    demo = ["Work from Home (0km)", "Cycle", "Foot", "0-5km", "High", "Low", "Minors 0-18", "Driving"]
     per = df.groupby("msoa21").agg(
         count=("price_sold", "size"),
         median_price=("price_sold", "median"),
@@ -416,15 +416,15 @@ def _bare(ax, keep_bottom=True):
 HEATMAP_COLS = ["price_sold", "num_bed_", "num_bath", "num_reception", "Asian", "Black",
                 "Mixed", "White", "Other", "Minors 0-18", "Adults 18-60", "Elders >60",
                 "0-5km", "5-30km", ">30km", "Work from Home (0km)", "Living Offshore",
-                "Low", "Medium", "High", "Other Qualification", "Work from Home",
+                "Low", "Medium", "High", "Other Qualification",
                 "City Public", "Rail", "Cycle", "Driving", "Foot", "Other Method"]
 HEATMAP_LABELS = {
     "price_sold": "Price", "num_bed_": "Beds", "num_bath": "Baths", "num_reception": "Receptions",
     "Minors 0-18": "Age 0-18", "Adults 18-60": "Age 18-60", "Elders >60": "Age 60+",
     "0-5km": "Commute <5km", "5-30km": "Commute 5-30km", ">30km": "Commute >30km",
-    "Work from Home (0km)": "Dist: WFH", "Living Offshore": "Offshore",
+    "Work from Home (0km)": "Work from home", "Living Offshore": "Offshore",
     "Low": "Qual: low", "Medium": "Qual: med", "High": "Qual: high",
-    "Other Qualification": "Qual: other", "Work from Home": "Travel: WFH",
+    "Other Qualification": "Qual: other",
     "City Public": "Bus", "Rail": "Rail", "Cycle": "Cycle", "Driving": "Car",
     "Foot": "Foot", "Other Method": "Other travel"}
 
@@ -579,9 +579,9 @@ def fig_sales_timeline(df) -> Path:
 SOCIAL_VARS = ["Asian", "Black", "Mixed", "White", "Other", "Minors 0-18", "Adults 18-60",
                "Elders >60", "0-5km", "5-30km", ">30km", "Work from Home (0km)",
                "Living Offshore", "Low", "Medium", "High", "Other Qualification",
-               "Work from Home", "City Public", "Rail", "Cycle", "Driving", "Foot", "Other Method"]
+               "City Public", "Rail", "Cycle", "Driving", "Foot", "Other Method"]
 SOCIAL_LABEL = {
-    "Work from Home (0km)": "Work from home (commute band)", "Work from Home": "Work from home (travel)",
+    "Work from Home (0km)": "Work from home",
     "Low": "Low qualifications", "High": "Degree-level qualifications",
     "Living Offshore": "Offshore workers", "Driving": "Drives to work",
     "Other Qualification": "Other qualifications", ">30km": "Commutes >30 km",
