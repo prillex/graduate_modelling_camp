@@ -19,12 +19,16 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy.stats import pearsonr
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.patheffects as path_effects
 from matplotlib.colors import Normalize
 from matplotlib.gridspec import GridSpec
+from matplotlib.patches import FancyBboxPatch
+from matplotlib.ticker import FuncFormatter
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from plot_cambridgeshire_maps import (  # noqa: E402
@@ -40,15 +44,19 @@ from plot_cambridgeshire_maps import (  # noqa: E402
     ACCENT,
     BLUE_RAMP,
     load,
-    _choropleth,
-    _hbar,
     title_block,
     footer,
 )
 
+# best/worst highlight colours + panel surface
+GOOD = "#0e6f4e"
+BAD = "#d4380d"
+PANEL = "#f2f1ec"
+
 R2_RESULT = (
     PROJECT_ROOT / "outputs" / "msoa_price_map" / "result of RF for different region.txt"
 )
+MSOA_NAMES = PROJECT_ROOT / "data" / "spatial" / "msoa_names.csv"
 MODEL_NAME = "RF Full Features + Cambridge/London Distance"
 
 # One Simpson index per social block. Column names match the readable names
@@ -62,9 +70,9 @@ SIMPSON_BLOCKS = {
 }
 
 
-def parse_regional_r2(path=R2_RESULT, model_name=MODEL_NAME):
-    """Read per-MSOA R2 (price scale) for one model from the results text file."""
-    rows = {}
+def parse_regional_table(path=R2_RESULT, model_name=MODEL_NAME):
+    """Per-MSOA regional metrics for one model, as a DataFrame indexed by msoa21."""
+    rows = []
     in_section = False
     header_seen = False
     for line in path.read_text().splitlines():
@@ -81,11 +89,26 @@ def parse_regional_r2(path=R2_RESULT, model_name=MODEL_NAME):
             header_seen = True
             continue
         if header_seen and re.match(r"^E0\d{7}\b", stripped):
-            fields = stripped.split()
-            rows[fields[0]] = float(fields[-1])  # last column = R2_price
+            f = stripped.split()
+            rows.append(
+                {
+                    "msoa21": f[0],
+                    "n_test": int(f[1]),
+                    "actual_mean": int(f[2].replace(",", "")),
+                    "MAE": int(f[4].replace(",", "")),
+                    "RMSE": int(f[5].replace(",", "")),
+                    "MAPE": float(f[6]),
+                    "r2_price": float(f[-1]),
+                }
+            )
     if not rows:
         raise ValueError(f"No rows parsed for model '{model_name}' in {path}")
-    return pd.Series(rows, name="r2_price")
+    return pd.DataFrame(rows).set_index("msoa21")
+
+
+def parse_regional_r2(path=R2_RESULT, model_name=MODEL_NAME):
+    """Per-MSOA R2 (price scale) for one model, as a Series."""
+    return parse_regional_table(path, model_name)["r2_price"]
 
 
 def simpson_index(block):
@@ -106,19 +129,118 @@ def per_msoa_diversity(df):
 
 
 # --- figure 1: regional R2 map --------------------------------------------------
-def fig_r2_map(gdf, r2):
+def _group_panel(pax, x0, w, header, color, sub, rows, avg):
+    """One comparison column (best or worst) inside the bottom panel axes."""
+    pax.add_patch(
+        FancyBboxPatch(
+            (x0, 0.0), w, 1.0, boxstyle="round,pad=0.006,rounding_size=0.03",
+            fc=PANEL, ec="none", transform=pax.transAxes, zorder=1,
+        )
+    )
+    pad = 0.03
+    pax.text(x0 + pad, 0.88, header, color=color, fontsize=15, fontweight="bold",
+             transform=pax.transAxes, va="center")
+    pax.text(x0 + pad, 0.79, sub, color=MUTED, fontsize=10.5, transform=pax.transAxes, va="center")
+    y = 0.63
+    for i, (name, r2v, n, mape) in enumerate(rows, start=1):
+        pax.text(x0 + pad, y, f"{i}", color=color, fontsize=13, fontweight="bold",
+                 transform=pax.transAxes, ha="left", va="center")
+        pax.text(x0 + pad + 0.032, y, name, color=INK, fontsize=12.5, transform=pax.transAxes, va="center")
+        pax.text(x0 + pad + 0.032, y - 0.08,
+                 f"R² {r2v:.2f}    ·    {n:,} sales    ·    {mape:.1f}% error",
+                 color=INK_2, fontsize=10.5, transform=pax.transAxes, va="center")
+        y -= 0.18
+    pax.plot([x0 + pad, x0 + w - pad], [y + 0.03, y + 0.03], color=GRID, lw=1, transform=pax.transAxes)
+    pax.text(x0 + pad, y - 0.03, "Group average", color=MUTED, fontsize=10.5,
+             transform=pax.transAxes, va="center")
+    pax.text(x0 + w - pad, y - 0.03,
+             f"R² {avg[0]:.2f}   ·   {avg[1]:,.0f} sales   ·   {avg[2]:.1f}% error",
+             color=color, fontsize=11.5, fontweight="bold", transform=pax.transAxes, ha="right", va="center")
+
+
+def fig_r2_map(gdf, table, names):
     g = gdf.copy()
-    g["r2_price"] = g["MSOA21CD"].map(r2)
-    missing = g["r2_price"].isna().sum()
-    if missing:
-        raise ValueError(f"{missing} MSOAs on the map have no R2 value")
+    g["r2"] = g["MSOA21CD"].map(table["r2_price"])
+    if g["r2"].isna().any():
+        raise ValueError("some MSOAs on the map have no R2 value")
+    g["name"] = g["MSOA21CD"].map(names).fillna(g["MSOA21CD"])
+    g["cx"] = g.geometry.centroid.x
+    g["cy"] = g.geometry.centroid.y
 
-    norm = Normalize(g["r2_price"].min(), g["r2_price"].max())
-    fig, ax = _choropleth(g, "r2_price", BLUE_RAMP, norm)
-    _hbar(fig, BLUE_RAMP, norm, "Test R² (price scale)", lambda v, _: f"{v:.2f}")
+    order = g.sort_values("r2", ascending=False)
+    best3 = order.head(3)
+    worst3 = order.tail(3).iloc[::-1]  # worst first
 
-    best = g.loc[g["r2_price"].idxmax()]
-    worst = g.loc[g["r2_price"].idxmin()]
+    fig = plt.figure(figsize=(12.5, 15.4))
+    fig.patch.set_facecolor(SURFACE)
+    ax = fig.add_axes([0.13, 0.325, 0.85, 0.60])
+    norm = Normalize(g["r2"].min(), g["r2"].max())
+    g.plot(ax=ax, column="r2", cmap=BLUE_RAMP, norm=norm, linewidth=0.6, edgecolor="white")
+    ax.set_axis_off()
+    ax.set_aspect("equal")
+
+    best3.plot(ax=ax, facecolor="none", edgecolor=GOOD, linewidth=2.8, zorder=5)
+    worst3.plot(ax=ax, facecolor="none", edgecolor=BAD, linewidth=2.8, zorder=5)
+
+    # label the 6 highlighted areas, pushed radially outward to avoid the centre
+    halo = [path_effects.withStroke(linewidth=3, foreground=SURFACE)]
+    minx, miny, maxx, maxy = g.total_bounds
+    mx, my = (minx + maxx) / 2, (miny + maxy) / 2
+    for rank_set, color in ((best3, GOOD), (worst3, BAD)):
+        for rank, (_, row) in enumerate(rank_set.iterrows(), start=1):
+            vx, vy = row["cx"] - mx, row["cy"] - my
+            dist = np.hypot(vx, vy) or 1.0
+            ux, uy = vx / dist, vy / dist
+            off = 82
+            ax.plot(row["cx"], row["cy"], "o", ms=6, mfc=color, mec="white", mew=1.1, zorder=9)
+            ax.annotate(
+                f"{rank}. {row['name']}",
+                (row["cx"], row["cy"]),
+                xytext=(ux * off, uy * off),
+                textcoords="offset points",
+                ha="left" if ux >= 0 else "right",
+                va="bottom" if uy >= 0 else "top",
+                fontsize=11,
+                fontweight="bold",
+                color=color,
+                zorder=10,
+                path_effects=halo,
+                arrowprops=dict(arrowstyle="-", color=color, lw=1.1, shrinkA=0, shrinkB=6),
+            )
+
+    # vertical colorbar on the left
+    cax = fig.add_axes([0.055, 0.47, 0.026, 0.34])
+    cb = fig.colorbar(plt.cm.ScalarMappable(cmap=BLUE_RAMP, norm=norm), cax=cax, orientation="vertical")
+    cb.set_label("Test R²  (price scale)", color=INK, fontsize=12.5, fontweight="bold")
+    cb.outline.set_visible(False)
+    cb.ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:.2f}"))
+    cb.ax.tick_params(colors=MUTED, labelsize=10, length=0)
+    cax.text(0.5, 1.04, "better fit", transform=cax.transAxes, ha="center", va="bottom",
+             fontsize=9.5, color=GOOD, fontweight="bold")
+    cax.text(0.5, -0.04, "weaker fit", transform=cax.transAxes, ha="center", va="top",
+             fontsize=9.5, color=BAD, fontweight="bold")
+
+    # comparison panel below the map
+    def rows_of(frame):
+        return [
+            (r["name"], r["r2"], int(table.loc[r["MSOA21CD"], "n_test"]),
+             float(table.loc[r["MSOA21CD"], "MAPE"]))
+            for _, r in frame.iterrows()
+        ]
+
+    def avg_of(frame):
+        idx = frame["MSOA21CD"]
+        return (frame["r2"].mean(), table.loc[idx, "n_test"].mean(), table.loc[idx, "MAPE"].mean())
+
+    pax = fig.add_axes([0.04, 0.035, 0.92, 0.235])
+    pax.set_xlim(0, 1)
+    pax.set_ylim(0, 1)
+    pax.axis("off")
+    _group_panel(pax, 0.0, 0.47, "Best-fit areas", GOOD,
+                 "the model nails these", rows_of(best3), avg_of(best3))
+    _group_panel(pax, 0.53, 0.47, "Worst-fit areas", BAD,
+                 "the model struggles here", rows_of(worst3), avg_of(worst3))
+
     title_block(
         fig,
         "How Well the Model Predicts, by Area",
@@ -126,8 +248,8 @@ def fig_r2_map(gdf, r2):
     )
     footer(
         fig,
-        f"R² on a 20% hold-out set, per MSOA  ·  best {best['r2_price']:.2f}, "
-        f"weakest {worst['r2_price']:.2f}  ·  Boundaries: ONS MSOA 2021  ·  EPSG:27700",
+        "R² on a 20% hold-out set, per MSOA  ·  worst-fit areas have far fewer sales and much larger % errors  ·  "
+        "Boundaries: ONS MSOA 2021  ·  EPSG:27700",
     )
     out = IMAGE_DIR / "rf_full_features_msoa_r2_map.png"
     fig.savefig(out, dpi=220, bbox_inches="tight")
@@ -136,8 +258,12 @@ def fig_r2_map(gdf, r2):
 
 
 # --- figure 2: diversity vs price ----------------------------------------------
+def _fmt_p(p):
+    return "p < 0.001" if p < 0.001 else f"p = {p:.3f}"
+
+
 def _scatter(ax, x, y, name, yfmt=lambda v, _: f"£{v/1000:.0f}k"):
-    r = float(np.corrcoef(x, y)[0, 1])
+    r, p = pearsonr(x, y)
     ax.scatter(x, y, s=34, color=POS, alpha=0.75, edgecolor="white", linewidth=0.6, zorder=3)
     slope, intercept = np.polyfit(x, y, 1)
     xs = np.linspace(x.min(), x.max(), 50)
@@ -145,12 +271,22 @@ def _scatter(ax, x, y, name, yfmt=lambda v, _: f"£{v/1000:.0f}k"):
     ax.set_title(name, fontsize=12.5, fontweight="bold", color=INK, pad=8, loc="left")
     ax.text(
         0.04,
-        0.06,
+        0.14,
         f"r = {r:+.2f}",
         transform=ax.transAxes,
         fontsize=11,
         fontweight="bold",
         color=NEG if r < 0 else POS,
+        ha="left",
+        va="bottom",
+    )
+    ax.text(
+        0.04,
+        0.05,
+        _fmt_p(p) + ("" if p < 0.05 else "  (n.s.)"),
+        transform=ax.transAxes,
+        fontsize=9.5,
+        color=INK_2 if p < 0.05 else MUTED,
         ha="left",
         va="bottom",
     )
@@ -288,13 +424,14 @@ def fig_diversity_vs_r2(per, r2):
 
 def main():
     df, gdf = load()
-    r2 = parse_regional_r2()
+    table = parse_regional_table()
+    names = pd.read_csv(MSOA_NAMES).set_index("msoa21")["name"]
     per = per_msoa_diversity(df)
 
     outputs = [
-        fig_r2_map(gdf, r2),
+        fig_r2_map(gdf, table, names),
         fig_diversity_vs_price(per),
-        fig_diversity_vs_r2(per, r2),
+        fig_diversity_vs_r2(per, table["r2_price"]),
     ]
     for out in outputs:
         print(f"Wrote {out}")
