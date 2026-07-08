@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.colors import BoundaryNorm, LinearSegmentedColormap, ListedColormap, Normalize
 from matplotlib.patches import Patch
-from matplotlib.ticker import FuncFormatter
+from matplotlib.ticker import FixedLocator, FuncFormatter, NullLocator
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
@@ -386,6 +386,185 @@ def fig_type_trends(df) -> Path:
     return out
 
 
+# ================= EDA / modelling-prep charts (each its own image) =============
+DIVERGE = LinearSegmentedColormap.from_list("cam_div", ["#2a78d6", "#eef0ee", "#e34948"])
+
+
+def gbp():
+    return FuncFormatter(lambda v, _: f"£{v/1000:.0f}k")
+
+
+def _bare(ax, keep_bottom=True):
+    for s in ("top", "right", "left"):
+        ax.spines[s].set_visible(False)
+    ax.spines["bottom"].set_visible(keep_bottom)
+    ax.spines["bottom"].set_color(GRID)
+    ax.tick_params(colors=MUTED, length=0, labelsize=9)
+
+
+HEATMAP_COLS = ["price_sold", "num_bed_", "num_bath", "num_reception", "Asian", "Black",
+                "Mixed", "White", "Other", "Minors 0-18", "Adults 18-60", "Elders >60",
+                "0-5km", "5-30km", ">30km", "Work from Home (0km)", "Living Offshore",
+                "Low", "Medium", "High", "Other Qualification", "Work from Home",
+                "City Public", "Rail", "Cycle", "Driving", "Foot", "Other Method"]
+HEATMAP_LABELS = {
+    "price_sold": "Price", "num_bed_": "Beds", "num_bath": "Baths", "num_reception": "Receptions",
+    "Minors 0-18": "Age 0-18", "Adults 18-60": "Age 18-60", "Elders >60": "Age 60+",
+    "0-5km": "Commute <5km", "5-30km": "Commute 5-30km", ">30km": "Commute >30km",
+    "Work from Home (0km)": "Dist: WFH", "Living Offshore": "Offshore",
+    "Low": "Qual: low", "Medium": "Qual: med", "High": "Qual: high",
+    "Other Qualification": "Qual: other", "Work from Home": "Travel: WFH",
+    "City Public": "Bus", "Rail": "Rail", "Cycle": "Cycle", "Driving": "Car",
+    "Foot": "Foot", "Other Method": "Other travel"}
+
+
+def fig_price_distribution(df) -> Path:
+    p = df["price_sold"].values
+    med = float(np.median(p))
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6.2))
+    fig.subplots_adjust(left=0.05, right=0.975, top=0.80, bottom=0.13, wspace=0.14)
+    for ax, logx in zip(axes, (False, True)):
+        bins = (np.logspace(np.log10(p.min()), np.log10(p.max()), 44) if logx
+                else np.linspace(p.min(), p.max(), 46))
+        ax.hist(p, bins=bins, color="#1baf7a" if logx else "#2a78d6",
+                edgecolor="white", linewidth=0.4)
+        if logx:
+            ax.set_xscale("log")
+            ax.xaxis.set_minor_locator(NullLocator())
+            ax.xaxis.set_major_locator(FixedLocator([50_000, 100_000, 200_000, 400_000, 700_000]))
+        ax.axvline(med, color=NEG, lw=2)
+        ax.xaxis.set_major_formatter(gbp())
+        ax.set_title("Linear axis — right-skewed" if not logx else "Log axis — near-symmetric",
+                     fontsize=11, fontweight="bold", color=INK, loc="left", pad=8)
+        _bare(ax); ax.set_yticks([])
+    axes[0].axvline(747500, color="#eb6834", lw=1.4, ls="--")
+    axes[0].text(740000, axes[0].get_ylim()[1] * 0.9, "£747.5k max ", color="#eb6834",
+                 fontsize=9, ha="right", va="top")
+    axes[0].text(med - 12000, axes[0].get_ylim()[1] * 0.99, f"median £{med/1000:.0f}k ",
+                 color=NEG, fontsize=9, ha="right", va="top", fontweight="bold")
+    title_block(fig, "The Target: House-Price Distribution",
+                "raw prices are right-skewed and bounded at £747,500 (the upper filter); on a log axis they are near-symmetric — model log(price)")
+    footer(fig, f"{len(p):,} sales  ·  median £{med/1000:.0f}k  ·  range £{p.min()/1000:.0f}k–£{p.max()/1000:.0f}k (the max is a filter, not a pile-up)")
+    out = IMAGE_DIR / "cambridgeshire_price_distribution.png"
+    fig.savefig(out, dpi=200, bbox_inches="tight"); plt.close(fig)
+    return out
+
+
+def fig_price_by_bedrooms(df) -> Path:
+    beds = list(range(1, 8))
+    data = [df.loc[df["num_bed_"] == b, "price_sold"].values for b in beds]
+    fig, ax = plt.subplots(figsize=(11, 7))
+    fig.subplots_adjust(left=0.10, right=0.97, top=0.84, bottom=0.10)
+    ax.boxplot(data, positions=beds, widths=0.62, patch_artist=True, showfliers=False,
+               medianprops=dict(color="white", linewidth=2),
+               boxprops=dict(facecolor="#2a78d6", edgecolor="#256abf"),
+               whiskerprops=dict(color="#256abf"), capprops=dict(color="#256abf"))
+    for b, d in zip(beds, data):
+        ax.text(b, df["price_sold"].max() * 0.03, f"n={len(d):,}", ha="center",
+                fontsize=8, color=MUTED)
+    ax.yaxis.set_major_formatter(gbp())
+    ax.set_xlabel("Number of bedrooms", fontsize=10.5, color=INK_2)
+    _bare(ax); ax.tick_params(axis="y", labelsize=9)
+    title_block(fig, "Price Rises with Bedrooms — then Hits the Cap",
+                "sale price by bedroom count  ·  box = middle 50%, line = median, whiskers = typical range")
+    footer(fig, "Outliers hidden for clarity  ·  the £747.5k ceiling flattens the top of the 5-7 bed boxes")
+    out = IMAGE_DIR / "cambridgeshire_price_by_bedrooms.png"
+    fig.savefig(out, dpi=200, bbox_inches="tight"); plt.close(fig)
+    return out
+
+
+def fig_correlation_heatmap(df) -> Path:
+    cols = [c for c in HEATMAP_COLS if c in df.columns]
+    corr = df[cols].corr().values
+    labels = [HEATMAP_LABELS.get(c, c) for c in cols]
+    fig, ax = plt.subplots(figsize=(13, 12))
+    fig.subplots_adjust(left=0.17, right=0.99, top=0.86, bottom=0.17)
+    im = ax.imshow(corr, cmap=DIVERGE, vmin=-1, vmax=1)
+    ax.set_xticks(range(len(labels))); ax.set_xticklabels(labels, rotation=90, fontsize=7.6, color=INK_2)
+    ax.set_yticks(range(len(labels))); ax.set_yticklabels(labels, fontsize=7.6, color=INK_2)
+    ax.tick_params(length=0)
+    for sp in ax.spines.values():
+        sp.set_visible(False)
+    ax.add_patch(plt.Rectangle((-0.5, -0.5), len(labels), 1, fill=False, edgecolor=INK, lw=1.4))
+    cb = fig.colorbar(im, fraction=0.036, pad=0.02)
+    cb.set_label("Correlation (Pearson r)", color=INK_2, fontsize=10)
+    cb.outline.set_visible(False); cb.ax.tick_params(colors=MUTED, length=0, labelsize=9)
+    title_block(fig, "How the Features Relate — Correlation Matrix",
+                "blue = move together, red = move apart. The top row is price; census blocks each sum to 100 → collinear")
+    footer(fig, "Pearson r across all sales  ·  strong within-block correlation (age, commute, qualifications) signals redundant features")
+    out = IMAGE_DIR / "cambridgeshire_correlation_heatmap.png"
+    fig.savefig(out, dpi=200, bbox_inches="tight"); plt.close(fig)
+    return out
+
+
+def fig_price_by_type_box(df) -> Path:
+    tot = df.groupby("property_type").size()
+    keep = tot[tot >= 100].index
+    med = (df[df["property_type"].isin(keep)].groupby("property_type")["price_sold"]
+           .median().sort_values())
+    types = med.index.tolist()
+    data = [df.loc[df["property_type"] == t, "price_sold"].values for t in types]
+    fig, ax = plt.subplots(figsize=(12, 9))
+    fig.subplots_adjust(left=0.19, right=0.97, top=0.87, bottom=0.07)
+    ax.boxplot(data, orientation="horizontal", positions=range(len(types)), widths=0.62,
+               patch_artist=True, showfliers=False,
+               medianprops=dict(color="white", linewidth=2),
+               boxprops=dict(facecolor="#1baf7a", edgecolor="#158f64"),
+               whiskerprops=dict(color="#158f64"), capprops=dict(color="#158f64"))
+    ax.set_yticks(range(len(types))); ax.set_yticklabels(types, fontsize=9.2, color=INK)
+    ax.xaxis.set_major_formatter(gbp())
+    _bare(ax); ax.tick_params(axis="y", length=0)
+    title_block(fig, "Price Spread by Property Type",
+                "sale-price distribution per type (17 with enough data), sorted by median  ·  boxes overlap a lot")
+    footer(fig, "Box = middle 50%, line = median, whiskers = typical range; outliers hidden  ·  rare types (<100 sales) omitted")
+    out = IMAGE_DIR / "cambridgeshire_price_by_type_box.png"
+    fig.savefig(out, dpi=200, bbox_inches="tight"); plt.close(fig)
+    return out
+
+
+def fig_price_per_bed_map(df, gdf) -> Path:
+    ppb = df.assign(v=df["price_sold"] / df["num_bed_"]).groupby("msoa21")["v"].median()
+    g = gdf.assign(ppb=gdf["MSOA21CD"].map(ppb))
+    norm = Normalize(g["ppb"].min(), g["ppb"].max())
+    fig, ax = _choropleth(g, "ppb", TEAL_RAMP, norm)
+    _hbar(fig, TEAL_RAMP, norm, "Median price per bedroom", lambda v, _: f"£{v/1000:.0f}k")
+    title_block(fig, "Location Premium — Price per Bedroom",
+                "median sale price divided by bedrooms  ·  strips out house size to show the pure location value")
+    footer(fig, "Price per bedroom = median of (sale price / bedrooms) per area  ·  ONS MSOA 2021  ·  EPSG:27700")
+    out = IMAGE_DIR / "cambridgeshire_price_per_bedroom_map.png"
+    fig.savefig(out, dpi=220, bbox_inches="tight"); plt.close(fig)
+    return out
+
+
+def fig_sales_timeline(df) -> Path:
+    d = pd.to_datetime(df["sold_date"])
+    m = d.dt.to_period("M").value_counts().sort_index()
+    x = np.arange(len(m))
+    is_mar = [p.month == 3 for p in m.index]
+    colors = ["#eb6834" if mar else "#9ec5f4" for mar in is_mar]
+    fig, ax = plt.subplots(figsize=(14, 6))
+    fig.subplots_adjust(left=0.06, right=0.98, top=0.82, bottom=0.12)
+    ax.bar(x, m.values, color=colors, width=0.9)
+    # year ticks
+    jans = [i for i, p in enumerate(m.index) if p.month == 1]
+    ax.set_xticks(jans); ax.set_xticklabels([str(m.index[i].year) for i in jans], fontsize=10, color=INK_2)
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v/1000:.0f}k" if v >= 1000 else f"{v:.0f}"))
+    _bare(ax)
+    for i, p in enumerate(m.index):
+        if p.month == 3 and m.values[i] > 1500:
+            ax.text(x[i], m.values[i] + 80, f"31 Mar\n{m.values[i]:,}", ha="center",
+                    fontsize=8.5, color="#c2410c", fontweight="bold")
+    ax.scatter([], [], marker="s", s=90, color="#eb6834", label="March (financial year-end)")
+    ax.scatter([], [], marker="s", s=90, color="#9ec5f4", label="other months")
+    ax.legend(loc="upper right", frameon=False, fontsize=10, labelcolor=INK_2)
+    title_block(fig, "When Sales Were Recorded — the 31-March Artifact",
+                "monthly sales counts  ·  huge spikes on 31 March 2019 & 2020 are imputed year-end dates, not real activity")
+    footer(fig, "By sold_date  ·  2022 runs only to March  ·  treat dates as coarse (financial year) not exact days when modelling")
+    out = IMAGE_DIR / "cambridgeshire_sales_timeline.png"
+    fig.savefig(out, dpi=200, bbox_inches="tight"); plt.close(fig)
+    return out
+
+
 def base_style() -> None:
     mpl.rcParams.update({
         "font.family": "sans-serif",
@@ -400,9 +579,13 @@ def main() -> None:
     IMAGE_DIR.mkdir(parents=True, exist_ok=True)
     base_style()
     df, gdf = load()
-    for p in (fig_count_map(df, gdf), fig_type_map(df, gdf), fig_price_profile(df),
-              fig_price_map(df, gdf), fig_population_map(df, gdf),
-              fig_type_trends(df)):
+    figs = [
+        fig_count_map(df, gdf), fig_type_map(df, gdf), fig_price_profile(df),
+        fig_price_map(df, gdf), fig_population_map(df, gdf), fig_type_trends(df),
+        fig_price_distribution(df), fig_price_by_bedrooms(df), fig_correlation_heatmap(df),
+        fig_price_by_type_box(df), fig_price_per_bed_map(df, gdf), fig_sales_timeline(df),
+    ]
+    for p in figs:
         print(f"Saved {p.relative_to(PROJECT_ROOT)}")
 
 
