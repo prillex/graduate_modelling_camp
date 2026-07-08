@@ -7,7 +7,7 @@ library(scales)
 
 # Data ----
 data_descriptive <- read.csv("data/raw/Cambridge data descriptive.csv")
-cambridge_data <- read.csv("data/cleaned/Cambridge_data_cleaned.csv")
+cambridge_data <- read.csv("data/cleaned/Cambridge data_cleaned.csv")
 spatial_data <- read.csv("data/spatial/spatial_data.csv")
   
 # cambridge_data_cleaned <- merge(cambridge_data, spatial_data[, c("MSOA21CD", "LAT", "LONG")], by.x = "msoa21", by.y = "MSOA21CD", all.x = TRUE)
@@ -39,7 +39,7 @@ spatial_data <- read.csv("data/spatial/spatial_data.csv")
 #   cambridge_coords["lon"]
 # )
 # 
-# write.csv(cambridge_data_cleaned, "data/cleaned/Cambridge_data_cleaned.csv", row.names = FALSE)
+# write.csv(cambridge_data_cleaned, "data/cleaned/Cambridge data_cleaned.csv", row.names = FALSE)
 
 detached_houses <- cambridge_data_cleaned[cambridge_data_cleaned$property_type == "Detached house", ]
 

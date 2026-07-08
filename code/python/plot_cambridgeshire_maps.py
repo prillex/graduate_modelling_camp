@@ -35,7 +35,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
 IMAGE_DIR = PROJECT_ROOT / "image"
 
-CLEANED = DATA_DIR / "cleaned" / "Cambridge_data_cleaned.csv"
+CLEANED = DATA_DIR / "cleaned" / "Cambridge data_cleaned.csv"
 POPULATION = DATA_DIR / "spatial" / "msoa_population_mid2022.csv"
 NAMES = DATA_DIR / "spatial" / "msoa_names.csv"
 

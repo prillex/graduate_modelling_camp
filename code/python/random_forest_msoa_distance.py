@@ -1,5 +1,4 @@
 from pathlib import Path
-import warnings
 
 import numpy as np
 import pandas as pd
@@ -11,12 +10,8 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 
 
-warnings.filterwarnings("ignore")
-
-
-BASE_DIR = Path(__file__).resolve().parent
-DATA_PATH = BASE_DIR / "data" / "Cambridge_data_cleaned_new.csv"
-MSOA_COORD_PATH = BASE_DIR / "data" / "msoa21_coordinates.csv"
+BASE_DIR = Path(__file__).resolve().parents[2]
+DATA_PATH = BASE_DIR / "data" / "cleaned" / "Cambridge data_cleaned.csv"
 OUTPUT_DIR = BASE_DIR / "outputs"
 PLOT_DIR = OUTPUT_DIR / "rf_distance_without_msoa_plots"
 
@@ -24,16 +19,11 @@ TARGET = "price_sold"
 TEST_SIZE = 0.20
 RANDOM_STATE = 42
 
-USE_LOG_TARGET = True
+USE_LOG_TARGET = False
 MIN_PROPERTY_TYPE_COUNT = 500
 MIN_MSOA_COUNT = 100
 TOP_IMPORTANCE_ROWS = 25
 PLOT_SAMPLE_SIZE = 1000
-
-# Approximate Cambridge city centre. Change this if you want another centre,
-# e.g. Cambridge Market Square or Cambridge railway station.
-CAMBRIDGE_CENTER_LAT = 52.2053
-CAMBRIDGE_CENTER_LON = 0.1218
 
 RF_PARAMS = {
     "n_estimators": 300,
@@ -47,6 +37,23 @@ RF_PARAMS = {
 }
 
 
+# The cleaned data stores the social columns with R-style dotted names; map them
+# back to the readable names used in NUMERIC_FEATURES below.
+COLUMN_RENAME = {
+    "Minors.0.18": "Minors 0-18",
+    "Adults.18.60": "Adults 18-60",
+    "Elders..60": "Elders >60",
+    "X0.5km": "0-5km",
+    "X5.30km": "5-30km",
+    "X.30km": ">30km",
+    "Work.from.Home..0km.": "Work from Home (0km)",
+    "Living.Offshore": "Living Offshore",
+    "Other.Qualification": "Other Qualification",
+    "City.Public": "City Public",
+    "Other.Method": "Other Method",
+}
+
+
 NUMERIC_FEATURES = [
     "num_bed_",
     "num_bath",
@@ -54,6 +61,7 @@ NUMERIC_FEATURES = [
     "start_year",
     "start_month",
     "distance_to_cambridge_km",
+    "distance_to_london_km",
     "Asian",
     "Black",
     "Mixed",
@@ -82,20 +90,6 @@ NUMERIC_FEATURES = [
 
 BASE_CATEGORICAL_FEATURES = ["property_type_model"]
 MSOA_CATEGORICAL_FEATURE = "msoa21_model"
-
-
-CODE_COLUMNS = ["msoa21", "msoa21cd", "msoa21_code", "MSOA21CD", "MSOA21_CD"]
-LAT_COLUMNS = ["latitude", "lat", "LAT", "Latitude"]
-LON_COLUMNS = ["longitude", "lon", "lng", "LONG", "Longitude"]
-EASTING_COLUMNS = ["easting", "Easting", "x", "X", "BNG_E", "eastings"]
-NORTHING_COLUMNS = ["northing", "Northing", "y", "Y", "BNG_N", "northings"]
-
-
-def first_existing_column(df, candidates):
-    for col in candidates:
-        if col in df.columns:
-            return col
-    return None
 
 
 def clean_input_data(df):
@@ -137,111 +131,42 @@ def collapse_rare_levels(series, levels, other_label):
     return values.where(values.isin(levels), other_label)
 
 
-def load_msoa_coordinates(path=MSOA_COORD_PATH):
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Missing MSOA coordinate lookup file: {path}\n"
-            "Create a CSV with columns like: msoa21, latitude, longitude.\n"
-            "If your lookup uses British National Grid, columns like "
-            "msoa21, easting, northing are also supported when pyproj is installed."
-        )
-
-    coords = pd.read_csv(path)
-    code_col = first_existing_column(coords, CODE_COLUMNS)
-    lat_col = first_existing_column(coords, LAT_COLUMNS)
-    lon_col = first_existing_column(coords, LON_COLUMNS)
-    easting_col = first_existing_column(coords, EASTING_COLUMNS)
-    northing_col = first_existing_column(coords, NORTHING_COLUMNS)
-
-    if code_col is None:
-        raise ValueError(
-            f"{path} must contain an MSOA code column, e.g. msoa21 or MSOA21CD."
-        )
-
-    coords = coords.copy()
-    coords["msoa21"] = coords[code_col].astype(str)
-
-    if lat_col is not None and lon_col is not None:
-        coords["msoa_lat"] = pd.to_numeric(coords[lat_col], errors="coerce")
-        coords["msoa_lon"] = pd.to_numeric(coords[lon_col], errors="coerce")
-    elif easting_col is not None and northing_col is not None:
-        try:
-            from pyproj import Transformer
-        except ImportError as exc:
-            raise ImportError(
-                "The coordinate lookup has Easting/Northing but no latitude/"
-                "longitude columns. Install pyproj or provide latitude/"
-                "longitude columns instead."
-            ) from exc
-
-        easting = pd.to_numeric(coords[easting_col], errors="coerce")
-        northing = pd.to_numeric(coords[northing_col], errors="coerce")
-        transformer = Transformer.from_crs("EPSG:27700", "EPSG:4326", always_xy=True)
-        lon, lat = transformer.transform(easting.to_numpy(), northing.to_numpy())
-        coords["msoa_lat"] = lat
-        coords["msoa_lon"] = lon
-    else:
-        raise ValueError(
-            f"{path} must contain either latitude/longitude columns or "
-            "Easting/Northing columns."
-        )
-
-    coords = coords[["msoa21", "msoa_lat", "msoa_lon"]].dropna()
-    coords = coords.drop_duplicates(subset=["msoa21"], keep="first")
-
-    return coords
-
-
-def haversine_distance_km(lat, lon, centre_lat, centre_lon):
-    earth_radius_km = 6371.0088
-    lat1 = np.radians(lat)
-    lon1 = np.radians(lon)
-    lat2 = np.radians(centre_lat)
-    lon2 = np.radians(centre_lon)
-
-    dlat = lat2 - lat1
-    dlon = lon2 - lon1
-    a = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
-
-    return 2 * earth_radius_km * np.arcsin(np.sqrt(a))
-
-
 def add_msoa_distance_feature(train_df, test_df):
-    coords = load_msoa_coordinates()
+    # Distances to Cambridge (market square) and London (Trafalgar Square) are
+    # already provided in the cleaned data as dist_cambridge / dist_london,
+    # both in km. Use them directly rather than recomputing from coordinates.
+    train_df = train_df.copy()
+    test_df = test_df.copy()
 
-    train_df = train_df.merge(coords, on="msoa21", how="left")
-    test_df = test_df.merge(coords, on="msoa21", how="left")
-
-    train_df["distance_to_cambridge_km"] = haversine_distance_km(
-        train_df["msoa_lat"],
-        train_df["msoa_lon"],
-        CAMBRIDGE_CENTER_LAT,
-        CAMBRIDGE_CENTER_LON,
-    )
-    test_df["distance_to_cambridge_km"] = haversine_distance_km(
-        test_df["msoa_lat"],
-        test_df["msoa_lon"],
-        CAMBRIDGE_CENTER_LAT,
-        CAMBRIDGE_CENTER_LON,
-    )
-
-    train_missing = train_df["distance_to_cambridge_km"].isna().sum()
-    test_missing = test_df["distance_to_cambridge_km"].isna().sum()
-    fill_value = train_df["distance_to_cambridge_km"].median()
-
-    train_df["distance_to_cambridge_km"] = train_df[
-        "distance_to_cambridge_km"
-    ].fillna(fill_value)
-    test_df["distance_to_cambridge_km"] = test_df[
-        "distance_to_cambridge_km"
-    ].fillna(fill_value)
-
-    distance_info = {
-        "coordinate_rows": len(coords),
-        "train_missing_distance": int(train_missing),
-        "test_missing_distance": int(test_missing),
-        "median_distance_km": fill_value,
+    distance_sources = {
+        "distance_to_cambridge_km": "dist_cambridge",
+        "distance_to_london_km": "dist_london",
     }
+
+    missing_columns = [
+        source_col
+        for source_col in distance_sources.values()
+        if source_col not in train_df.columns
+    ]
+    if missing_columns:
+        raise ValueError(
+            f"Missing distance columns in cleaned data: {missing_columns}"
+        )
+
+    distance_info = {}
+    for model_col, source_col in distance_sources.items():
+        train_df[model_col] = pd.to_numeric(train_df[source_col], errors="coerce")
+        test_df[model_col] = pd.to_numeric(test_df[source_col], errors="coerce")
+
+        fill_value = train_df[model_col].median()
+        distance_info[model_col] = {
+            "train_missing": int(train_df[model_col].isna().sum()),
+            "test_missing": int(test_df[model_col].isna().sum()),
+            "median_km": fill_value,
+        }
+
+        train_df[model_col] = train_df[model_col].fillna(fill_value)
+        test_df[model_col] = test_df[model_col].fillna(fill_value)
 
     return train_df, test_df, distance_info
 
@@ -366,8 +291,13 @@ def predict_price(model, X_test):
     return predictions, np.log(np.maximum(predictions, 1))
 
 
-def evaluate_model(name, model, X_test, y_test, y_test_model):
+def evaluate_model(name, model, X_test, y_test):
     predicted_price, predicted_log_price = predict_price(model, X_test)
+
+    # Compare like with like: R2_price in price space, R2_log_price in log
+    # space. predicted_log_price is log of the predicted price in both target
+    # modes, so pair it with log of the actual price (never the raw price).
+    log_actual = np.log(np.maximum(np.asarray(y_test, dtype=float), 1.0))
 
     return {
         "model": name,
@@ -375,7 +305,7 @@ def evaluate_model(name, model, X_test, y_test, y_test_model):
         "MAE": mean_absolute_error(y_test, predicted_price),
         "RMSE": np.sqrt(mean_squared_error(y_test, predicted_price)),
         "MAPE_%": np.mean(np.abs((y_test - predicted_price) / y_test)) * 100,
-        "R2_log_price": r2_score(y_test_model, predicted_log_price),
+        "R2_log_price": r2_score(log_actual, predicted_log_price),
         "R2_price": r2_score(y_test, predicted_price),
     }
 
@@ -587,7 +517,7 @@ def save_property_type_plots(plot_df, metrics):
     ]
 
     fig, ax = plt.subplots(figsize=(10, 8))
-    ax.boxplot(data, vert=False, labels=ordered_types, showfliers=False)
+    ax.boxplot(data, orientation="horizontal", tick_labels=ordered_types, showfliers=False)
     ax.set_title("Random Forest Distance Model: Absolute Error by Property Type")
     ax.set_xlabel("Absolute error")
     ax.set_ylabel("")
@@ -759,7 +689,7 @@ def run_experiment(experiment_name, include_msoa_dummy, train_df, test_df):
         train_df,
         include_msoa_dummy,
     )
-    X_train, X_test, y_train, y_test, y_train_model, y_test_model = build_xy(
+    X_train, X_test, y_train, y_test, y_train_model, _ = build_xy(
         train_df,
         test_df,
         numeric_features,
@@ -783,7 +713,6 @@ def run_experiment(experiment_name, include_msoa_dummy, train_df, test_df):
         model,
         X_test,
         y_test,
-        y_test_model,
     )
 
     importances = feature_importance_table(model)
@@ -845,6 +774,7 @@ def print_property_type_preprocessing(feature_info):
 
 def main():
     df = pd.read_csv(DATA_PATH)
+    df = df.rename(columns=COLUMN_RENAME)
     df = clean_input_data(df)
     train_df, test_df = random_train_test_split(df)
     train_df, test_df, distance_info = add_msoa_distance_feature(train_df, test_df)
@@ -860,12 +790,11 @@ def main():
     print(f"Test rows:                       {len(test_df):,}")
     print(f"Property type levels:            {feature_info['n_property_levels']}")
     print(f"MSOA levels:                     {feature_info['n_msoa_levels']}")
-    print(f"MSOA coordinate rows:            {distance_info['coordinate_rows']:,}")
-    print(f"Train rows missing distance:     {distance_info['train_missing_distance']:,}")
-    print(f"Test rows missing distance:      {distance_info['test_missing_distance']:,}")
-    print(f"Median distance used for fill:   {distance_info['median_distance_km']:.3f} km")
-    print(f"Cambridge centre latitude:       {CAMBRIDGE_CENTER_LAT}")
-    print(f"Cambridge centre longitude:      {CAMBRIDGE_CENTER_LON}")
+    for model_col, info in distance_info.items():
+        print(f"{model_col}:")
+        print(f"    Train rows missing:          {info['train_missing']:,}")
+        print(f"    Test rows missing:           {info['test_missing']:,}")
+        print(f"    Median used for fill:        {info['median_km']:.3f} km")
     print(f"Target used for fitting:         {'log(price_sold)' if USE_LOG_TARGET else TARGET}")
     print_property_type_preprocessing(feature_info)
 

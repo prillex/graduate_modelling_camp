@@ -7,9 +7,9 @@ from urllib.request import urlopen
 import pandas as pd
 
 
-BASE_DIR = Path(__file__).resolve().parent
-DATA_PATH = BASE_DIR / "data" / "Cambridge data_cleaned.csv"
-OUTPUT_PATH = BASE_DIR / "data" / "msoa21_coordinates.csv"
+BASE_DIR = Path(__file__).resolve().parents[2]
+DATA_PATH = BASE_DIR / "data" / "cleaned" / "Cambridge data_cleaned.csv"
+OUTPUT_PATH = BASE_DIR / "data" / "spatial" / "msoa21_coordinates.csv"
 ONS_FEATURE_URL = (
     "https://services1.arcgis.com/ESMARspQHYMw9BZ9/arcgis/rest/services/"
     "MSOA_December_2021_EW_PWC_V2/FeatureServer/0/query"
