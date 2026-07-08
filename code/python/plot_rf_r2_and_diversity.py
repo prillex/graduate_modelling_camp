@@ -59,6 +59,7 @@ R2_RESULT = (
     PROJECT_ROOT / "outputs" / "msoa_price_map" / "result of RF for different region.txt"
 )
 MSOA_NAMES = PROJECT_ROOT / "data" / "spatial" / "msoa_names.csv"
+PTYPE_DIVERSITY_CSV = PROJECT_ROOT / "data" / "spatial" / "msoa_property_type_diversity.csv"
 IMPORTANCE_CSV = PROJECT_ROOT / "outputs" / "msoa_price_map" / "rf_cambridge_london_feature_importances.csv"
 MODEL_NAME = "RF Full Features + Cambridge/London Distance"
 
@@ -615,6 +616,70 @@ def fig_gini_importance_rank():
     return out
 
 
+# --- figure 6: property-type diversity vs model fit -----------------------------
+def _partial_r(a, b, c):
+    """Partial correlation of a and b, controlling for c."""
+    rac = pearsonr(a, c)[0]
+    rbc = pearsonr(b, c)[0]
+    rab = pearsonr(a, b)[0]
+    return (rab - rac * rbc) / np.sqrt((1 - rac**2) * (1 - rbc**2))
+
+
+def fig_ptype_diversity_vs_r2(table, names):
+    div = pd.read_csv(PTYPE_DIVERSITY_CSV).set_index("msoa21")
+    d = div.join(table[["r2_price", "n_test"]]).dropna()
+    d["name"] = names.reindex(d.index).fillna(pd.Series(d.index, index=d.index))
+    x = d["shannon_entropy"].to_numpy(float)
+    y = d["r2_price"].to_numpy(float)
+    r, p = pearsonr(x, y)
+    pr = _partial_r(x, y, d["n_test"].to_numpy(float))
+
+    order = d.sort_values("r2_price")
+    worst3 = set(order.head(3).index)
+    best3 = set(order.tail(3).index)
+
+    fig, ax = plt.subplots(figsize=(10.5, 7.2))
+    fig.patch.set_facecolor(SURFACE)
+    ax.set_facecolor(SURFACE)
+    fig.subplots_adjust(left=0.09, right=0.965, top=0.82, bottom=0.11)
+
+    colors = [BAD if i in worst3 else GOOD if i in best3 else POS for i in d.index]
+    ax.scatter(x, y, s=62, c=colors, alpha=0.82, edgecolor="white", linewidth=0.7, zorder=3)
+    slope, intercept = np.polyfit(x, y, 1)
+    xs = np.linspace(x.min(), x.max(), 50)
+    ax.plot(xs, slope * xs + intercept, color=INK, lw=1.6, ls="--", zorder=4)
+
+    ax.text(0.03, 0.95, f"r = {r:+.2f}", transform=ax.transAxes, fontsize=14,
+            fontweight="bold", color=POS if r >= 0 else NEG, va="top")
+    ax.text(0.03, 0.885, _fmt_p(p) + ("" if p < 0.05 else "  (n.s.)"),
+            transform=ax.transAxes, fontsize=11, color=INK_2, va="top")
+    ax.text(0.03, 0.825, f"controlling for sales count:  r = {pr:+.2f}",
+            transform=ax.transAxes, fontsize=10.5, color=MUTED, va="top")
+
+    ax.set_xlabel("Property-type diversity  (Shannon entropy, nats)", fontsize=11, color=INK_2)
+    ax.set_ylabel("Test R²", fontsize=11, color=INK_2)
+    _bare(ax)
+    ax.grid(True, color=GRID, lw=0.6, alpha=0.6, zorder=0)
+    ax.legend(
+        handles=[Patch(color=GOOD, label="best-fit 3"), Patch(color=BAD, label="worst-fit 3"),
+                 Patch(color=POS, label="other areas")],
+        loc="lower left", frameon=False, fontsize=9.5, labelcolor=INK_2,
+    )
+    title_block(
+        fig,
+        "Property-type Diversity vs Model Fit",
+        "each area's property-type Shannon entropy against the model's test R²  ·  no real link",
+    )
+    footer(
+        fig,
+        "43 MSOAs  ·  Pearson r vs R²  ·  the weak raw link disappears once sales count is held fixed (partial r ≈ 0)",
+    )
+    out = IMAGE_DIR / "msoa_ptype_diversity_vs_r2.png"
+    fig.savefig(out, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
 def main():
     df, gdf = load()
     table = parse_regional_table()
@@ -627,6 +692,7 @@ def main():
         fig_diversity_vs_r2(per, table["r2_price"]),
         fig_sales_vs_r2(table, names),
         fig_gini_importance_rank(),
+        fig_ptype_diversity_vs_r2(table, names),
     ]
     for out in outputs:
         print(f"Wrote {out}")
