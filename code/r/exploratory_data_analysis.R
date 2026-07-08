@@ -7,38 +7,39 @@ library(scales)
 
 # Data ----
 data_descriptive <- read.csv("data/raw/Cambridge data descriptive.csv")
-cambridge_data <- read.csv("data/cleaned/Cambridge data_cleaned.csv")
+cambridge_data <- read.csv("data/cleaned/Cambridge_data_cleaned.csv")
 spatial_data <- read.csv("data/spatial/spatial_data.csv")
   
-cambridge_data_cleaned <- merge(cambridge_data, spatial_data[, c("MSOA21CD", "LAT", "LONG")], by.x = "msoa21", by.y = "MSOA21CD", all.x = TRUE)
-# Define coordinates
-london_coords <- c(lat = 51.5074, lon = -0.1278)
-cambridge_coords <- c(lat = 52.2053, lon = 0.1218)
+# cambridge_data_cleaned <- merge(cambridge_data, spatial_data[, c("MSOA21CD", "LAT", "LONG")], by.x = "msoa21", by.y = "MSOA21CD", all.x = TRUE)
 
-# Euclidean distance function (in km)
-euclidean_dist <- function(lat1, lon1, lat2, lon2) {
-  # Convert degrees to km (1 degree ≈ 111 km)
-  lat_km <- (lat2 - lat1) * 111
-  lon_km <- (lon2 - lon1) * 111 * cos((lat1 + lat2) * pi / 360)
-  return(sqrt(lat_km^2 + lon_km^2))
-}
+# # Define coordinates
+# london_coords <- c(lat = 51.5074, lon = -0.1278)
+# cambridge_coords <- c(lat = 52.2053, lon = 0.1218)
 
-# Add distance columns
-cambridge_data_cleaned$dist_london <- euclidean_dist(
-  cambridge_data_cleaned$LAT, 
-  cambridge_data_cleaned$LONG,
-  london_coords["lat"], 
-  london_coords["lon"]
-)
-
-cambridge_data_cleaned$dist_cambridge <- euclidean_dist(
-  cambridge_data_cleaned$LAT, 
-  cambridge_data_cleaned$LONG,
-  cambridge_coords["lat"], 
-  cambridge_coords["lon"]
-)
-
-write.csv(cambridge_data_cleaned, "data/cleaned/Cambridge_data_cleaned.csv", row.names = FALSE)
+# # Euclidean distance function (in km)
+# euclidean_dist <- function(lat1, lon1, lat2, lon2) {
+#   # Convert degrees to km (1 degree ≈ 111 km)
+#   lat_km <- (lat2 - lat1) * 111
+#   lon_km <- (lon2 - lon1) * 111 * cos((lat1 + lat2) * pi / 360)
+#   return(sqrt(lat_km^2 + lon_km^2))
+# }
+# 
+# # Add distance columns
+# cambridge_data_cleaned$dist_london <- euclidean_dist(
+#   cambridge_data_cleaned$LAT, 
+#   cambridge_data_cleaned$LONG,
+#   london_coords["lat"], 
+#   london_coords["lon"]
+# )
+# 
+# cambridge_data_cleaned$dist_cambridge <- euclidean_dist(
+#   cambridge_data_cleaned$LAT, 
+#   cambridge_data_cleaned$LONG,
+#   cambridge_coords["lat"], 
+#   cambridge_coords["lon"]
+# )
+# 
+# write.csv(cambridge_data_cleaned, "data/cleaned/Cambridge_data_cleaned.csv", row.names = FALSE)
 
 detached_houses <- cambridge_data_cleaned[cambridge_data_cleaned$property_type == "Detached house", ]
 
