@@ -25,7 +25,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as path_effects
-from matplotlib.colors import Normalize
+from matplotlib.colors import Normalize, LinearSegmentedColormap
 from matplotlib.gridspec import GridSpec
 from matplotlib.patches import FancyBboxPatch, Patch
 from matplotlib.ticker import FuncFormatter
@@ -680,69 +680,60 @@ def fig_ptype_diversity_vs_r2(table, names):
     return out
 
 
-# --- figure 7: heatmap — data volume vs diversity, coloured by fit ---------------
-def fig_fit_heatmap(table):
+# --- figure 7: each area as a point in the sales x diversity plane, coloured by R2
+# red-grey-blue ramp: keeps low-R2 points visible (they read warm, not washed out)
+FIT_RAMP = LinearSegmentedColormap.from_list(
+    "fit", ["#c0392b", "#e08a5a", "#b8b5ad", "#5b9bd5", "#123f7a"]
+)
+
+
+def fig_fit_by_sales_diversity(table, names):
     div = pd.read_csv(PTYPE_DIVERSITY_CSV).set_index("msoa21")
     d = div.join(table[["r2_price", "n_test"]]).dropna()
-    d["sales_tier"] = pd.qcut(d["n_test"], 3, labels=["Few", "Medium", "Many"])
-    d["div_tier"] = pd.qcut(d["shannon_entropy"], 3, labels=["Low", "Medium", "High"])
+    d["name"] = names.reindex(d.index).fillna(pd.Series(d.index, index=d.index))
+    x = d["n_test"].to_numpy(float)
+    y = d["shannon_entropy"].to_numpy(float)
+    r2 = d["r2_price"].to_numpy(float)
 
-    rows = ["High", "Medium", "Low"]          # diversity, high on top
-    cols = ["Few", "Medium", "Many"]          # sales, few on left
-    mean = d.groupby(["div_tier", "sales_tier"], observed=False)["r2_price"].mean().unstack().reindex(rows)[cols]
-    cnt = d.groupby(["div_tier", "sales_tier"], observed=False)["r2_price"].size().unstack().reindex(rows)[cols]
-    M, C = mean.to_numpy(), cnt.to_numpy()
-
-    sedge = d.groupby("sales_tier", observed=False)["n_test"].agg(["min", "max"])
-    dedge = d.groupby("div_tier", observed=False)["shannon_entropy"].agg(["min", "max"])
-    xlabs = [f"{t}\n{int(sedge.loc[t, 'min'])}–{int(sedge.loc[t, 'max'])}" for t in cols]
-    ylabs = [f"{t}\n{dedge.loc[t, 'min']:.1f}–{dedge.loc[t, 'max']:.1f}" for t in rows]
-
-    fig, ax = plt.subplots(figsize=(10.5, 8.4))
+    fig, ax = plt.subplots(figsize=(11.5, 8))
     fig.patch.set_facecolor(SURFACE)
     ax.set_facecolor(SURFACE)
-    fig.subplots_adjust(left=0.19, right=0.99, top=0.80, bottom=0.14)
+    fig.subplots_adjust(left=0.085, right=0.985, top=0.80, bottom=0.11)
 
-    norm = Normalize(np.nanmin(M), np.nanmax(M))
-    im = ax.imshow(M, cmap=BLUE_RAMP, norm=norm, aspect="auto")
-    for i in range(M.shape[0]):
-        for j in range(M.shape[1]):
-            if np.isfinite(M[i, j]):
-                tc = "white" if norm(M[i, j]) > 0.55 else INK
-                ax.text(j, i - 0.1, f"{M[i, j]:.2f}", ha="center", va="center",
-                        fontsize=23, fontweight="bold", color=tc)
-                ax.text(j, i + 0.24, f"{int(C[i, j])} areas", ha="center", va="center",
-                        fontsize=10.5, color=tc)
+    norm = Normalize(r2.min(), r2.max())
+    sc = ax.scatter(x, y, c=r2, cmap=FIT_RAMP, norm=norm, s=190,
+                    edgecolor="white", linewidth=1.1, zorder=3)
 
-    ax.set_xticks(range(3))
-    ax.set_xticklabels(xlabs, fontsize=10.5, color=INK)
-    ax.set_yticks(range(3))
-    ax.set_yticklabels(ylabs, fontsize=10.5, color=INK)
-    ax.set_xlabel("Data volume  —  sales per area  →", fontsize=11.5, color=INK_2, labelpad=8)
-    ax.set_ylabel("Property-type diversity  (Shannon H)  →", fontsize=11.5, color=INK_2, labelpad=8)
-    ax.tick_params(length=0)
-    for s in ax.spines.values():
-        s.set_visible(False)
-    ax.set_xticks(np.arange(-0.5, 3, 1), minor=True)
-    ax.set_yticks(np.arange(-0.5, 3, 1), minor=True)
-    ax.grid(which="minor", color=SURFACE, lw=4)
-    ax.tick_params(which="minor", length=0)
+    # label the two lowest-R2 areas (clearly the reddest), offset to avoid overlap
+    worst = d.sort_values("r2_price").head(2)
+    halo = [path_effects.withStroke(linewidth=2.6, foreground=SURFACE)]
+    for k, (_, row) in enumerate(worst.iterrows()):
+        ax.annotate(f"{row['name']}  (R² {row['r2_price']:.2f})",
+                    (row["n_test"], row["shannon_entropy"]), xytext=(12, 12 if k == 0 else -16),
+                    textcoords="offset points", fontsize=9, color="#8f1d13", fontweight="bold",
+                    ha="left", va="center", path_effects=halo,
+                    arrowprops=dict(arrowstyle="-", color="#8f1d13", lw=1))
 
-    cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03)
-    cb.set_label("Mean test R²", color=INK_2, fontsize=10)
+    ax.set_xlabel("Sales per area  —  data volume  →", fontsize=11.5, color=INK_2)
+    ax.set_ylabel("Property-type diversity  (Shannon H)  →", fontsize=11.5, color=INK_2)
+    _bare(ax)
+    ax.grid(True, color=GRID, lw=0.6, alpha=0.6, zorder=0)
+
+    cb = fig.colorbar(sc, ax=ax, fraction=0.045, pad=0.02)
+    cb.set_label("Test R²", color=INK_2, fontsize=10.5)
     cb.outline.set_visible(False)
     cb.ax.tick_params(colors=MUTED, length=0, labelsize=9)
 
-    fig.text(0.055, 0.945, "Data Volume Drives Model Fit — Not Diversity", fontsize=19,
+    fig.text(0.055, 0.945, "Model Fit by Data Volume and Diversity", fontsize=19,
              fontweight="bold", color=INK)
     fig.text(0.055, 0.905,
-             "mean test R² across a sales × diversity grid  ·  colour brightens left→right (sales), "
-             "barely changes up↓down (diversity)", fontsize=11.5, color=INK_2)
-    fig.text(0.055, 0.045,
-             "43 MSOAs, 3×3 terciles  ·  R² vs log(sales) r=+0.65; property-type diversity adds almost "
-             "nothing once sales is known (partial r=+0.03)", fontsize=9, color=MUTED)
+             "each area placed by its sales count and property-type diversity, coloured by test R²  ·  "
+             "red (weak fit) lines up on the left", fontsize=11.5, color=INK_2)
+    fig.text(0.055, 0.03,
+             "43 MSOAs  ·  R² vs log(sales) r=+0.65; diversity adds ~nothing once sales is known "
+             "(partial r=+0.03) — red points span every diversity level, but only low sales", fontsize=9, color=MUTED)
 
-    out = IMAGE_DIR / "msoa_fit_heatmap.png"
+    out = IMAGE_DIR / "msoa_fit_by_sales_diversity.png"
     fig.savefig(out, dpi=220, bbox_inches="tight")
     plt.close(fig)
     return out
@@ -761,7 +752,7 @@ def main():
         fig_sales_vs_r2(table, names),
         fig_gini_importance_rank(),
         fig_ptype_diversity_vs_r2(table, names),
-        fig_fit_heatmap(table),
+        fig_fit_by_sales_diversity(table, names),
     ]
     for out in outputs:
         print(f"Wrote {out}")
