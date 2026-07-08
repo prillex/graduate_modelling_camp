@@ -37,6 +37,7 @@ from plot_cambridgeshire_maps import (  # noqa: E402
     GRID,
     POS,
     NEG,
+    ACCENT,
     BLUE_RAMP,
     load,
     _choropleth,
@@ -98,6 +99,7 @@ def per_msoa_diversity(df):
     """One row per MSOA: median price plus the five Simpson diversity indices."""
     per = df.groupby("msoa21").first()
     per["median_price"] = df.groupby("msoa21")["price_sold"].median()
+    per["n_sales"] = df.groupby("msoa21").size()
     for name, cols in SIMPSON_BLOCKS.items():
         per[name] = simpson_index(per[cols])
     return per
@@ -134,7 +136,7 @@ def fig_r2_map(gdf, r2):
 
 
 # --- figure 2: diversity vs price ----------------------------------------------
-def _scatter(ax, x, y, name):
+def _scatter(ax, x, y, name, yfmt=lambda v, _: f"£{v/1000:.0f}k"):
     r = float(np.corrcoef(x, y)[0, 1])
     ax.scatter(x, y, s=34, color=POS, alpha=0.75, edgecolor="white", linewidth=0.6, zorder=3)
     slope, intercept = np.polyfit(x, y, 1)
@@ -158,9 +160,38 @@ def _scatter(ax, x, y, name):
     for side in ("left", "bottom"):
         ax.spines[side].set_color(GRID)
     ax.tick_params(colors=MUTED, length=0, labelsize=9)
-    ax.yaxis.set_major_formatter(lambda v, _: f"£{v/1000:.0f}k")
+    ax.yaxis.set_major_formatter(yfmt)
     ax.grid(True, color=GRID, lw=0.6, alpha=0.7, zorder=0)
     return r
+
+
+def _corr_summary_bar(ax, labels, vals, ref_label=None, ref_val=None, title="Correlation"):
+    """Diverging ranked-correlation bar; optional muted reference bar on top."""
+    names = list(labels)
+    values = list(vals)
+    colors = [NEG if v < 0 else POS for v in values]
+    if ref_label is not None:
+        names = names + [ref_label]
+        values = values + [ref_val]
+        colors = colors + [ACCENT]
+    y = np.arange(len(names))
+    ax.barh(y, values, color=colors, height=0.6, zorder=3)
+    ax.axvline(0, color=INK, lw=1)
+    lim = max(0.6, max(abs(v) for v in values) + 0.12)
+    ax.set_xlim(-lim, lim)
+    ax.set_ylim(-0.6, len(names) - 0.4)
+    ax.set_yticks([])
+    ax.set_title(title, fontsize=12.5, fontweight="bold", color=INK, pad=8, loc="left")
+    for yi, name, v in zip(y, names, values):
+        ax.text(-0.02 * lim / 0.6 if v >= 0 else 0.02 * lim / 0.6, yi, name, va="center",
+                ha="right" if v >= 0 else "left", fontsize=10, color=INK)
+        ax.text(v + (0.02 if v >= 0 else -0.02) * lim / 0.6, yi, f"{v:+.2f}", va="center",
+                ha="left" if v >= 0 else "right", fontsize=9.5, fontweight="bold", color=INK_2)
+    ax.set_facecolor(SURFACE)
+    for side in ("top", "right", "left"):
+        ax.spines[side].set_visible(False)
+    ax.spines["bottom"].set_color(GRID)
+    ax.tick_params(colors=MUTED, length=0, labelsize=9)
 
 
 def fig_diversity_vs_price(per):
@@ -182,29 +213,9 @@ def fig_diversity_vs_price(per):
             ax.set_ylabel("Median price", fontsize=10, color=INK_2)
         ax.set_xlabel("Simpson diversity  (0 = uniform, 1 = mixed)", fontsize=9.5, color=INK_2)
 
-    # sixth cell: ranked |r| summary bar (diverging, labels on the empty side)
+    # sixth cell: ranked |r| summary bar
     ax = fig.add_subplot(gs[1, 2])
-    bars = order[::-1]
-    vals = [corr[n] for n in bars]
-    colors = [NEG if v < 0 else POS for v in vals]
-    y = np.arange(len(bars))
-    ax.barh(y, vals, color=colors, height=0.6, zorder=3)
-    ax.axvline(0, color=INK, lw=1)
-    ax.set_xlim(-0.62, 0.62)
-    ax.set_ylim(-0.6, len(bars) - 0.4)
-    ax.set_yticks([])
-    ax.set_title("Correlation with price", fontsize=12.5, fontweight="bold", color=INK, pad=8, loc="left")
-    for yi, name, v in zip(y, bars, vals):
-        # category name sits on the side opposite the bar; value at the bar tip
-        ax.text(-0.02 if v >= 0 else 0.02, yi, name, va="center",
-                ha="right" if v >= 0 else "left", fontsize=10, color=INK)
-        ax.text(v + (0.02 if v >= 0 else -0.02), yi, f"{v:+.2f}", va="center",
-                ha="left" if v >= 0 else "right", fontsize=9.5, fontweight="bold", color=INK_2)
-    ax.set_facecolor(SURFACE)
-    for side in ("top", "right", "left"):
-        ax.spines[side].set_visible(False)
-    ax.spines["bottom"].set_color(GRID)
-    ax.tick_params(colors=MUTED, length=0, labelsize=9)
+    _corr_summary_bar(ax, order[::-1], [corr[n] for n in order[::-1]], title="Correlation with price")
 
     title_block(
         fig,
@@ -223,12 +234,68 @@ def fig_diversity_vs_price(per):
     return out
 
 
+# --- figure 3: diversity vs model fit (per-MSOA R2) -----------------------------
+def fig_diversity_vs_r2(per, r2):
+    p = per.copy()
+    p["r2"] = p.index.map(r2)
+    p = p[p["r2"].notna()]
+    names = list(SIMPSON_BLOCKS)
+    corr = {n: float(np.corrcoef(p[n], p["r2"])[0, 1]) for n in names}
+    order = sorted(names, key=lambda n: abs(corr[n]), reverse=True)
+    n_r = float(np.corrcoef(p["n_sales"], p["r2"])[0, 1])
+
+    fig = plt.figure(figsize=(14, 8.6))
+    fig.patch.set_facecolor(SURFACE)
+    gs = GridSpec(
+        2, 3, figure=fig, left=0.065, right=0.975, top=0.84, bottom=0.10, hspace=0.42, wspace=0.28
+    )
+
+    r2v = p["r2"].to_numpy()
+    yfmt = lambda v, _: f"{v:.2f}"  # noqa: E731
+    for i, name in enumerate(order):
+        ax = fig.add_subplot(gs[i // 3, i % 3])
+        _scatter(ax, p[name].to_numpy(), r2v, name, yfmt=yfmt)
+        if i % 3 == 0:
+            ax.set_ylabel("Test R²", fontsize=10, color=INK_2)
+        ax.set_xlabel("Simpson diversity  (0 = uniform, 1 = mixed)", fontsize=9.5, color=INK_2)
+
+    ax = fig.add_subplot(gs[1, 2])
+    _corr_summary_bar(
+        ax,
+        order[::-1],
+        [corr[n] for n in order[::-1]],
+        ref_label="Sales per area (n)",
+        ref_val=n_r,
+        title="Correlation with model R²",
+    )
+
+    title_block(
+        fig,
+        "Does Diversity Explain Where the Model Struggles?",
+        "Simpson diversity of each social block vs the model's test R² per MSOA  ·  "
+        "no block explains the fit — sample size does",
+    )
+    footer(
+        fig,
+        "Test R² per MSOA (full features + Cambridge/London distance, 43 areas)  ·  Pearson r  ·  "
+        f"orange = number of sales, the real driver of fit (r={n_r:+.2f})",
+    )
+    out = IMAGE_DIR / "msoa_diversity_vs_model_fit.png"
+    fig.savefig(out, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
 def main():
     df, gdf = load()
     r2 = parse_regional_r2()
     per = per_msoa_diversity(df)
 
-    outputs = [fig_r2_map(gdf, r2), fig_diversity_vs_price(per)]
+    outputs = [
+        fig_r2_map(gdf, r2),
+        fig_diversity_vs_price(per),
+        fig_diversity_vs_r2(per, r2),
+    ]
     for out in outputs:
         print(f"Wrote {out}")
 
