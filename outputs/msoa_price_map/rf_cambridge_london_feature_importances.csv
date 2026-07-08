@@ -1,0 +1,38 @@
+model,feature,importance
+RF Full Features + Cambridge/London Distance,num__num_bed_,0.41886671956289984
+RF Full Features + Cambridge/London Distance,num__num_bath,0.05614447064308619
+RF Full Features + Cambridge/London Distance,num__start_month,0.05608435064392617
+RF Full Features + Cambridge/London Distance,num__distance_to_cambridge_km,0.05538493280607595
+RF Full Features + Cambridge/London Distance,num__num_reception,0.041957257167289895
+RF Full Features + Cambridge/London Distance,num__Cycle,0.04024848548217225
+RF Full Features + Cambridge/London Distance,num__Driving,0.034882972963268116
+RF Full Features + Cambridge/London Distance,num__distance_to_london_km,0.033441307695094576
+RF Full Features + Cambridge/London Distance,num__start_year,0.03245470487414738
+RF Full Features + Cambridge/London Distance,cat__property_type_model_Detached house,0.03036922917815646
+RF Full Features + Cambridge/London Distance,num__Low,0.026578024467539898
+RF Full Features + Cambridge/London Distance,num__High,0.025385152053075958
+RF Full Features + Cambridge/London Distance,cat__property_type_model_Flat,0.0231288145964254
+RF Full Features + Cambridge/London Distance,cat__property_type_model_Mobile/park home,0.019309853246865974
+RF Full Features + Cambridge/London Distance,cat__property_type_model_Detached bungalow,0.012450224067817855
+RF Full Features + Cambridge/London Distance,num__Foot,0.010984903280267995
+RF Full Features + Cambridge/London Distance,num__Mixed,0.010889535447985618
+RF Full Features + Cambridge/London Distance,cat__property_type_model_Terraced house,0.008416266382991656
+RF Full Features + Cambridge/London Distance,num__Medium,0.007673290526023127
+RF Full Features + Cambridge/London Distance,num__Rail,0.006980779411979104
+RF Full Features + Cambridge/London Distance,cat__property_type_model_Semi-detached house,0.005762953387405909
+RF Full Features + Cambridge/London Distance,num__Asian,0.005495510482074358
+RF Full Features + Cambridge/London Distance,num__White,0.004850192593181074
+RF Full Features + Cambridge/London Distance,num__Other,0.004814299524708843
+RF Full Features + Cambridge/London Distance,num__Black,0.004742752801419439
+RF Full Features + Cambridge/London Distance,cat__property_type_model_Bungalow,0.0046208337203524465
+RF Full Features + Cambridge/London Distance,cat__property_type_model_End terrace house,0.004613028404678741
+RF Full Features + Cambridge/London Distance,cat__property_type_model_Other property type,0.0039028325953565073
+RF Full Features + Cambridge/London Distance,cat__property_type_model_Town house,0.0038196089144204148
+RF Full Features + Cambridge/London Distance,cat__property_type_model_Maisonette,0.003478207906026435
+RF Full Features + Cambridge/London Distance,cat__property_type_model_Link-detached house,0.0013224011321545327
+RF Full Features + Cambridge/London Distance,cat__property_type_model_Semi-detached bungalow,0.0009461040411318902
+RF Core Distance Features,num__num_bed_,0.5158989507079353
+RF Core Distance Features,num__distance_to_cambridge_km,0.1670593117509959
+RF Core Distance Features,num__distance_to_london_km,0.14327795513127461
+RF Core Distance Features,num__num_bath,0.1006237840668282
+RF Core Distance Features,num__num_reception,0.0731399983429658
