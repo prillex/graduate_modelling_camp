@@ -27,7 +27,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patheffects as path_effects
 from matplotlib.colors import Normalize
 from matplotlib.gridspec import GridSpec
-from matplotlib.patches import FancyBboxPatch
+from matplotlib.patches import FancyBboxPatch, Patch
 from matplotlib.ticker import FuncFormatter
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -43,9 +43,11 @@ from plot_cambridgeshire_maps import (  # noqa: E402
     NEG,
     ACCENT,
     BLUE_RAMP,
+    TEAL_RAMP,
     load,
     title_block,
     footer,
+    _bare,
 )
 
 # best/worst highlight colours + panel surface
@@ -57,7 +59,46 @@ R2_RESULT = (
     PROJECT_ROOT / "outputs" / "msoa_price_map" / "result of RF for different region.txt"
 )
 MSOA_NAMES = PROJECT_ROOT / "data" / "spatial" / "msoa_names.csv"
+IMPORTANCE_CSV = PROJECT_ROOT / "outputs" / "msoa_price_map" / "rf_cambridge_london_feature_importances.csv"
 MODEL_NAME = "RF Full Features + Cambridge/London Distance"
+
+# feature-type colours (Property/Location/Social match the correlation-rank chart;
+# Time is added because the model also uses the sale date)
+TYPE_COLOR = {"Property": "#2a78d6", "Location": "#1baf7a", "Time": "#4a3aa7", "Social": "#c9c7bf"}
+
+# raw model feature (prefix stripped) -> (display name, feature type)
+FEATURE_META = {
+    "num_bed_": ("Bedrooms", "Property"),
+    "num_bath": ("Bathrooms", "Property"),
+    "num_reception": ("Receptions", "Property"),
+    "distance_to_cambridge_km": ("Distance to Cambridge", "Location"),
+    "distance_to_london_km": ("Distance to London", "Location"),
+    "start_year": ("Sale year", "Time"),
+    "start_month": ("Sale month", "Time"),
+    "Cycle": ("Cycle to work", "Social"),
+    "Driving": ("Drives to work", "Social"),
+    "Foot": ("Walks to work", "Social"),
+    "Rail": ("Rail to work", "Social"),
+    "City Public": ("Public transport", "Social"),
+    "Other Method": ("Other commute", "Social"),
+    "Low": ("Low qualifications", "Social"),
+    "Medium": ("Medium qualifications", "Social"),
+    "High": ("Degree-level qualifications", "Social"),
+    "Other Qualification": ("Other qualifications", "Social"),
+    "Asian": ("Asian", "Social"),
+    "Black": ("Black", "Social"),
+    "White": ("White", "Social"),
+    "Mixed": ("Mixed", "Social"),
+    "Other": ("Other ethnicity", "Social"),
+    "Minors 0-18": ("Under-18s", "Social"),
+    "Adults 18-60": ("Adults 18-60", "Social"),
+    "Elders >60": ("Over-60s", "Social"),
+    "0-5km": ("Commute 0-5km", "Social"),
+    "5-30km": ("Commute 5-30km", "Social"),
+    ">30km": ("Commute >30km", "Social"),
+    "Work from Home (0km)": ("Work from home", "Social"),
+    "Living Offshore": ("Offshore workers", "Social"),
+}
 
 # One Simpson index per social block. Column names match the readable names
 # produced by plot_cambridgeshire_maps' COL_RENAME (applied inside load()).
@@ -422,6 +463,158 @@ def fig_diversity_vs_r2(per, r2):
     return out
 
 
+# --- figure 4: data volume vs model fit -----------------------------------------
+def fig_sales_vs_r2(table, names):
+    d = table.copy()
+    d["r2"] = d["r2_price"]
+    d["name"] = names.reindex(d.index).fillna(pd.Series(d.index, index=d.index))
+    x = d["n_test"].to_numpy(float)
+    y = d["r2"].to_numpy(float)
+    r, p = pearsonr(x, y)
+
+    order = d.sort_values("r2")
+    worst3 = set(order.head(3).index)
+    best3 = set(order.tail(3).index)
+
+    fig = plt.figure(figsize=(14, 6.6))
+    fig.patch.set_facecolor(SURFACE)
+    gs = GridSpec(1, 2, figure=fig, width_ratios=[1.6, 1],
+                  left=0.07, right=0.975, top=0.80, bottom=0.13, wspace=0.22)
+
+    # scatter: sales vs R2
+    ax = fig.add_subplot(gs[0, 0])
+    ax.set_facecolor(SURFACE)
+    colors = [BAD if i in worst3 else GOOD if i in best3 else POS for i in d.index]
+    ax.scatter(x, y, s=52, c=colors, alpha=0.82, edgecolor="white", linewidth=0.6, zorder=3)
+    slope, intercept = np.polyfit(x, y, 1)
+    xs = np.linspace(x.min(), x.max(), 50)
+    ax.plot(xs, slope * xs + intercept, color=INK, lw=1.6, ls="--", zorder=4)
+    ax.text(0.035, 0.95, f"r = {r:+.2f}", transform=ax.transAxes, fontsize=13,
+            fontweight="bold", color=POS, va="top")
+    ax.text(0.035, 0.885, _fmt_p(p), transform=ax.transAxes, fontsize=10.5, color=INK_2, va="top")
+    halo = [path_effects.withStroke(linewidth=2.6, foreground=SURFACE)]
+    for i in worst3:
+        row = d.loc[i]
+        ax.annotate(row["name"], (row["n_test"], row["r2"]), xytext=(8, 0),
+                    textcoords="offset points", fontsize=8.6, color=BAD, va="center", ha="left",
+                    fontweight="bold", path_effects=halo)
+    ax.set_xlabel("Sales scored per area (hold-out set)", fontsize=10.5, color=INK_2)
+    ax.set_ylabel("Test R²", fontsize=10.5, color=INK_2)
+    _bare(ax)
+    ax.grid(True, color=GRID, lw=0.6, alpha=0.6, zorder=0)
+    ax.set_title("More sales → better, steadier fit", fontsize=13, fontweight="bold",
+                 color=INK, loc="left", pad=8)
+    handles = [
+        Patch(color=GOOD, label="best-fit 3"),
+        Patch(color=BAD, label="worst-fit 3"),
+        Patch(color=POS, label="other areas"),
+    ]
+    ax.legend(handles=handles, loc="lower right", frameon=False, fontsize=9.5, labelcolor=INK_2)
+
+    # tier bars: average R2 by data volume
+    ax2 = fig.add_subplot(gs[0, 1])
+    ax2.set_facecolor(SURFACE)
+    edges = [0, 150, 250, 400, np.inf]
+    labs = ["<150", "150–250", "250–400", "400+"]
+    d["tier"] = pd.cut(d["n_test"], bins=edges, labels=labs, right=False)
+    grp = d.groupby("tier", observed=False)["r2"].agg(["mean", "size"]).reindex(labs)
+    yb = np.arange(len(labs))
+    ramp = [TEAL_RAMP(0.30 + 0.6 * i / (len(labs) - 1)) for i in range(len(labs))]
+    ax2.bar(yb, grp["mean"], color=ramp, width=0.68, zorder=3)
+    for i, (m, nn) in enumerate(zip(grp["mean"], grp["size"])):
+        if np.isfinite(m):
+            ax2.text(i, m + 0.008, f"{m:.2f}", ha="center", va="bottom", fontsize=11.5,
+                     fontweight="bold", color=INK)
+            ax2.text(i, 0.03, f"{int(nn)} areas", ha="center", va="bottom", fontsize=9,
+                     color="white", fontweight="bold", zorder=4)
+    ax2.set_xticks(yb)
+    ax2.set_xticklabels(labs, fontsize=10, color=INK)
+    ax2.set_ylim(0, 1.0)
+    ax2.set_xlabel("Sales scored per area", fontsize=10.5, color=INK_2)
+    ax2.set_ylabel("Average test R²", fontsize=10.5, color=INK_2)
+    _bare(ax2)
+    ax2.set_title("Average fit by data volume", fontsize=13, fontweight="bold",
+                  color=INK, loc="left", pad=8)
+
+    title_block(
+        fig,
+        "Why Some Areas Fit Better: Data Volume",
+        "each area's hold-out R² against how many sales it has  ·  thin-data areas fit worst and noisiest",
+    )
+    footer(
+        fig,
+        "43 MSOAs  ·  Pearson r  ·  worst-fit areas (red) sit at low sales counts; more data lifts and steadies R²",
+    )
+    out = IMAGE_DIR / "msoa_sales_vs_r2.png"
+    fig.savefig(out, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
+# --- figure 5: Gini feature-importance ranking ----------------------------------
+def load_importances(model=MODEL_NAME):
+    d = pd.read_csv(IMPORTANCE_CSV)
+    d = d[d["model"] == model]
+    agg = {}
+    for feat, imp in zip(d["feature"], d["importance"]):
+        name = feat.split("__", 1)[1] if "__" in feat else feat
+        if name.startswith("property_type_model_"):
+            disp, typ = "Property type", "Property"
+        else:
+            disp, typ = FEATURE_META.get(name, (name, "Social"))
+        val, _ = agg.get(disp, (0.0, typ))
+        agg[disp] = (val + float(imp), typ)
+    rows = [(disp, typ, val) for disp, (val, typ) in agg.items()]
+    rows.sort(key=lambda t: t[2])  # ascending -> largest bar on top
+    return rows
+
+
+def fig_gini_importance_rank():
+    rows = load_importances()
+    labels = [r[0] for r in rows]
+    types = [r[1] for r in rows]
+    vals = [r[2] for r in rows]
+    colors = [TYPE_COLOR[t] for t in types]
+    y = np.arange(len(rows))
+
+    fig, ax = plt.subplots(figsize=(12, 11))
+    fig.patch.set_facecolor(SURFACE)
+    fig.subplots_adjust(left=0.33, right=0.93, top=0.855, bottom=0.07)
+    ax.set_facecolor(SURFACE)
+    ax.barh(y, vals, color=colors, height=0.76, zorder=3)
+    for i, v in enumerate(vals):
+        ax.text(v + max(vals) * 0.008, i, f"{v*100:.1f}%", va="center", ha="left",
+                fontsize=8.8, color=INK_2)
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels, fontsize=9.4, color=INK)
+    ax.set_xlim(0, max(vals) * 1.16)
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v*100:.0f}%"))
+    _bare(ax)
+    ax.set_xlabel("Random Forest importance  (share of split reduction, Gini)", fontsize=10, color=INK_2)
+
+    present = [t for t in ("Property", "Location", "Time", "Social") if t in types]
+    leg = ax.legend(
+        handles=[Patch(color=TYPE_COLOR[c], label=c) for c in present],
+        loc="lower right", frameon=False, fontsize=10.5, labelcolor=INK_2,
+        title="Feature type", title_fontsize=10,
+    )
+    leg.get_title().set_color(INK)
+    title_block(
+        fig,
+        "What the Model Leans On Most",
+        "every feature ranked by Random Forest importance (Gini)  ·  property-type categories combined",
+    )
+    footer(
+        fig,
+        "Gini importance sums to 100% across features  ·  full-features model  ·  "
+        "bedrooms dominate; the two distances rank in the top group",
+    )
+    out = IMAGE_DIR / "rf_full_features_gini_importance_rank.png"
+    fig.savefig(out, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
 def main():
     df, gdf = load()
     table = parse_regional_table()
@@ -432,6 +625,8 @@ def main():
         fig_r2_map(gdf, table, names),
         fig_diversity_vs_price(per),
         fig_diversity_vs_r2(per, table["r2_price"]),
+        fig_sales_vs_r2(table, names),
+        fig_gini_importance_rank(),
     ]
     for out in outputs:
         print(f"Wrote {out}")
