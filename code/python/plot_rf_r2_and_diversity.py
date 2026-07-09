@@ -28,7 +28,7 @@ import matplotlib.patheffects as path_effects
 from matplotlib.colors import Normalize, LinearSegmentedColormap
 from matplotlib.gridspec import GridSpec
 from matplotlib.patches import FancyBboxPatch, Patch
-from matplotlib.ticker import FuncFormatter
+from matplotlib.ticker import FuncFormatter, NullLocator
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from plot_cambridgeshire_maps import (  # noqa: E402
@@ -731,8 +731,9 @@ def fig_duplication_vs_r2(df, table, names):
     d["name"] = names.reindex(d.index).fillna(pd.Series(d.index, index=d.index))
     x = d["shared"].to_numpy(float)
     y = d["r2_price"].to_numpy(float)
-    r, p = pearsonr(x, y)
-    pr = _partial_r(x, y, d["n_test"].to_numpy(float))
+    lx = np.log(x)
+    r, p = pearsonr(lx, y)
+    pr = _partial_r(lx, y, np.log(d["n_test"].to_numpy(float)))
 
     order = d.sort_values("r2_price")
     worst3 = set(order.head(3).index)
@@ -745,17 +746,21 @@ def fig_duplication_vs_r2(df, table, names):
 
     colors = [BAD if i in worst3 else GOOD if i in best3 else POS for i in d.index]
     ax.scatter(x, y, s=62, c=colors, alpha=0.82, edgecolor="white", linewidth=0.7, zorder=3)
-    slope, intercept = np.polyfit(x, y, 1)
-    xs = np.linspace(x.min(), x.max(), 50)
-    ax.plot(xs, slope * xs + intercept, color=INK, lw=1.6, ls="--", zorder=4)
+    slope, intercept = np.polyfit(lx, y, 1)
+    xs = np.geomspace(x.min(), x.max(), 60)
+    ax.plot(xs, slope * np.log(xs) + intercept, color=INK, lw=1.6, ls="--", zorder=4)
 
     ax.text(0.03, 0.95, f"r = {r:+.2f}", transform=ax.transAxes, fontsize=14,
             fontweight="bold", color=POS if r >= 0 else NEG, va="top")
     ax.text(0.03, 0.885, _fmt_p(p) + ("" if p < 0.05 else "  (n.s.)"),
             transform=ax.transAxes, fontsize=11, color=INK_2, va="top")
 
-    ax.set_xlabel("Sales sharing an identical price & room type  (count)", fontsize=11.5, color=INK_2)
+    ax.set_xlabel("Sales sharing an identical price & room type  (count, log scale)",
+                  fontsize=11.5, color=INK_2)
     ax.set_ylabel("Test R²", fontsize=11.5, color=INK_2)
+    ax.set_xscale("log")
+    ax.set_xticks([200, 300, 500, 1000, 2000, 3000])
+    ax.xaxis.set_minor_locator(NullLocator())
     ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:,.0f}"))
     _bare(ax)
     ax.grid(True, color=GRID, lw=0.6, alpha=0.6, zorder=0)
