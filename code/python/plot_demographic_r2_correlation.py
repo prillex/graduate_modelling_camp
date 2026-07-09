@@ -1,9 +1,9 @@
-"""Does demographic diversity track house price? Cambridgeshire vs Birmingham.
+"""Does demographic diversity track model performance? Cambridgeshire vs Birmingham.
 
-Grouped bars comparing, for each demographic, the correlation (Pearson r) between
-its Simpson diversity per MSOA and area house prices. Cambridgeshire is computed
-from the cleaned sales data; Birmingham's values are the team's Birmingham model
-results. The ethnicity row is highlighted — it flips sign between the two cities.
+For each demographic, the significance (p-value) of the correlation between its
+Shannon diversity per MSOA and the model's test R² for that MSOA. Cambridgeshire
+is computed from our model; Birmingham's values are the team's Birmingham model
+results. Both are diversity-vs-R² (where the model does well/badly), not price.
 """
 import sys
 from pathlib import Path
@@ -22,6 +22,7 @@ from plot_cambridgeshire_maps import (  # noqa: E402
     PROJECT_ROOT, IMAGE_DIR, COL_RENAME,
     SURFACE, INK, INK_2, MUTED, GRID,
 )
+from plot_rf_r2_and_diversity import parse_regional_table, shannon_index  # noqa: E402
 
 CLEANED = PROJECT_ROOT / "data" / "cleaned" / "Cambridge data_cleaned.csv"
 
@@ -34,7 +35,7 @@ BLOCKS = {
     "Commute method": (["City Public", "Rail", "Cycle", "Driving", "Foot", "Other Method"], "Type of Commute"),
 }
 
-# team's Birmingham model results: display label -> (r, p)
+# team's Birmingham model results: display label -> (r, p) of diversity vs R²
 BHAM = {
     "Ethnicity": (-0.250260, 0.0038),
     "Age": (0.272605, 0.0015),
@@ -47,15 +48,14 @@ CAM_C, BHAM_C = "#2a78d6", "#7a3fb0"
 
 
 def cambridge_results():
+    """Cambridgeshire: correlation of each block's Shannon diversity with per-MSOA R²."""
     df = pd.read_csv(CLEANED).rename(columns=COL_RENAME)
     per = df.groupby("msoa21").first()
-    per["mp"] = df.groupby("msoa21")["price_sold"].median()
+    per["r2"] = per.index.map(parse_regional_table()["r2_price"])
+    per = per.dropna(subset=["r2"])
     out = {}
     for cols, label in BLOCKS.values():
-        p = per[cols].div(per[cols].sum(axis=1), axis=0)
-        k = p.shape[1]
-        simp = (1 - (p ** 2).sum(axis=1)) / (1 - 1 / k)
-        r, pv = pearsonr(simp, per["mp"])
+        r, pv = pearsonr(shannon_index(per[cols]), per["r2"])
         out[label] = (float(r), float(pv))
     return out
 
@@ -106,7 +106,7 @@ def main():
     ax.set_xticks([0.1, 1, 5, 10, 100])
     ax.get_xaxis().set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:g}%"))
     ax.xaxis.set_minor_locator(plt.NullLocator())
-    ax.set_xlabel("p-value of the diversity–price correlation  (log scale)", fontsize=11, color=INK_2)
+    ax.set_xlabel("p-value of the diversity–R² correlation  (log scale)", fontsize=11, color=INK_2)
     for s in ("top", "right", "left"):
         ax.spines[s].set_visible(False)
     ax.spines["bottom"].set_color(GRID)
@@ -118,16 +118,16 @@ def main():
         loc="center left", frameon=False, fontsize=10.5, labelcolor=INK_2, bbox_to_anchor=(1.01, 0.5),
     )
 
-    fig.text(0.06, 0.945, "Which Demographics Significantly Track Price?", fontsize=19,
+    fig.text(0.06, 0.945, "Which Demographics Track Model Performance?", fontsize=19,
              fontweight="bold", color=INK)
     fig.text(0.06, 0.905,
-             "significance (p-value) of each demographic's diversity–price link, per MSOA  ·  "
+             "significance (p-value) of each demographic's diversity vs the model's test R² per MSOA  ·  "
              "Cambridgeshire vs Birmingham  ·  left of the line = significant", fontsize=11.5, color=INK_2)
     fig.text(0.06, 0.03,
-             "p-value of Simpson diversity vs median price  ·  Cambridgeshire computed from the sales data; "
+             "p-value of Shannon diversity vs test R²  ·  Cambridgeshire computed from our model; "
              "Birmingham = team model results", fontsize=9, color=MUTED)
 
-    out = IMAGE_DIR / "demographic_price_correlation_cambridge_vs_birmingham.png"
+    out = IMAGE_DIR / "demographic_r2_correlation_cambridge_vs_birmingham.png"
     fig.savefig(out, dpi=220, bbox_inches="tight")
     plt.close(fig)
     print(f"Wrote {out}")
