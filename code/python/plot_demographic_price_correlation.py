@@ -29,8 +29,8 @@ CLEANED = PROJECT_ROOT / "data" / "cleaned" / "Cambridge data_cleaned.csv"
 BLOCKS = {
     "Ethnicity": (["Asian", "Black", "Mixed", "White", "Other"], "Ethnicity"),
     "Age": (["Minors 0-18", "Adults 18-60", "Elders >60"], "Age"),
-    "Commute distance": (["Work from Home (0km)", "0-5km", "5-30km", ">30km", "Living Offshore"], "Distance to Work"),
     "Education": (["Low", "Medium", "High", "Other Qualification"], "Level of Education"),
+    "Commute distance": (["Work from Home (0km)", "0-5km", "5-30km", ">30km", "Living Offshore"], "Distance to Work"),
     "Commute method": (["City Public", "Rail", "Cycle", "Driving", "Foot", "Other Method"], "Type of Commute"),
 }
 
@@ -78,13 +78,11 @@ def main():
     fig.subplots_adjust(left=0.20, right=0.86, top=0.80, bottom=0.12)
 
     y = np.arange(len(labels))[::-1]  # Ethnicity at top
-    y_eth = y[0]
 
     ax.set_xscale("log")
     # shade the significant zone (p < 5%)
     ax.axvspan(0.08, 5, color="#e6f3ec", zorder=0)
     ax.axvline(5, color="#0e6f4e", lw=1.4, ls="--", zorder=2)
-    ax.axhspan(y_eth - 0.5, y_eth + 0.5, color="#f3edfa", zorder=0)  # ethnicity band
 
     for lab, yy in zip(labels, y):
         pc = cam[lab][1] * 100.0
@@ -113,12 +111,6 @@ def main():
         ax.spines[s].set_visible(False)
     ax.spines["bottom"].set_color(GRID)
     ax.tick_params(colors=MUTED, length=0, labelsize=10)
-
-    # callout on the highlighted ethnicity row
-    ax.annotate("Ethnicity: significant in\nBirmingham, not here",
-                xy=(BHAM["Ethnicity"][1] * 100.0, y_eth), xytext=(0.16, y_eth + 0.60),
-                fontsize=10, color="#5a2d91", fontweight="bold", va="center", ha="center",
-                arrowprops=dict(arrowstyle="->", color="#5a2d91", lw=1.2))
 
     ax.legend(
         handles=[Patch(color=CAM_C, label="Cambridgeshire"),
