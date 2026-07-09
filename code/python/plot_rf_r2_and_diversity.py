@@ -44,10 +44,12 @@ from plot_cambridgeshire_maps import (  # noqa: E402
     ACCENT,
     BLUE_RAMP,
     TEAL_RAMP,
+    STAR,
     load,
     title_block,
     footer,
     _bare,
+    _project,
 )
 
 # best/worst highlight colours + panel surface
@@ -250,8 +252,18 @@ def fig_r2_map(gdf, table, names):
                 arrowprops=dict(arrowstyle="-", color=color, lw=1.1, shrinkA=0, shrinkB=6),
             )
 
+    # Isaac Newton Institute — the headline landmark, "where we are now"
+    newton = _project([("Isaac Newton Institute", 52.2109, 0.0985)]).geometry.iloc[0]
+    ax.plot(newton.x, newton.y, marker="*", ms=28, mfc=STAR, mec="white", mew=1.7, zorder=11)
+    ax.annotate(
+        "Isaac Newton Institute\n(where we are)", (newton.x, newton.y),
+        xytext=(14, 58), textcoords="offset points", ha="left", va="center",
+        fontsize=11.5, fontweight="bold", color=STAR, zorder=12, path_effects=halo,
+        arrowprops=dict(arrowstyle="-", color=STAR, lw=1.3, shrinkA=0, shrinkB=9),
+    )
+
     # vertical colorbar on the left
-    cax = fig.add_axes([0.055, 0.47, 0.026, 0.34])
+    cax = fig.add_axes([0.055, 0.33, 0.026, 0.40])
     cb = fig.colorbar(plt.cm.ScalarMappable(cmap=BLUE_RAMP, norm=norm), cax=cax, orientation="vertical")
     cb.set_label("Test R²  (price scale)", color=INK, fontsize=12.5, fontweight="bold")
     cb.outline.set_visible(False)
@@ -262,19 +274,38 @@ def fig_r2_map(gdf, table, names):
     cax.text(0.5, -0.04, "weaker fit", transform=cax.transAxes, ha="center", va="top",
              fontsize=9.5, color=BAD, fontweight="bold")
 
-    # comparison panel below the map
+    title_block(
+        fig,
+        "How Well the Model Predicts, by Area",
+        "Random Forest test R² per MSOA — full features + distance to Cambridge & London  ·  darker = better fit",
+    )
+    footer(
+        fig,
+        "R² on a 20% hold-out set, per MSOA  ·  ★ Isaac Newton Institute marks where we are  ·  "
+        "Boundaries: ONS MSOA 2021  ·  EPSG:27700",
+    )
+    out = IMAGE_DIR / "rf_full_features_msoa_r2_map.png"
+    fig.savefig(out, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
+def fig_r2_comparison(table, names):
+    t = table.copy()
+    t["name"] = names.reindex(t.index).fillna(pd.Series(t.index, index=t.index))
+    order = t.sort_values("r2_price", ascending=False)
+    best3, worst3 = order.head(3), order.tail(3).iloc[::-1]
+
     def rows_of(frame):
-        return [
-            (r["name"], r["r2"], int(table.loc[r["MSOA21CD"], "n_test"]),
-             float(table.loc[r["MSOA21CD"], "MAPE"]))
-            for _, r in frame.iterrows()
-        ]
+        return [(r["name"], r["r2_price"], int(r["n_test"]), float(r["MAPE"]))
+                for _, r in frame.iterrows()]
 
     def avg_of(frame):
-        idx = frame["MSOA21CD"]
-        return (frame["r2"].mean(), table.loc[idx, "n_test"].mean(), table.loc[idx, "MAPE"].mean())
+        return (frame["r2_price"].mean(), frame["n_test"].mean(), frame["MAPE"].mean())
 
-    pax = fig.add_axes([0.04, 0.035, 0.92, 0.235])
+    fig = plt.figure(figsize=(13, 5.0))
+    fig.patch.set_facecolor(SURFACE)
+    pax = fig.add_axes([0.04, 0.05, 0.92, 0.72])
     pax.set_xlim(0, 1)
     pax.set_ylim(0, 1)
     pax.axis("off")
@@ -285,15 +316,12 @@ def fig_r2_map(gdf, table, names):
 
     title_block(
         fig,
-        "How Well the Model Predicts, by Area",
-        "Random Forest test R² per MSOA — full features + distance to Cambridge & London  ·  darker = better fit",
+        "Best- and Worst-fit Areas",
+        "per-MSOA test R² — full features + Cambridge/London distance  ·  worst-fit areas have far fewer "
+        "sales and larger % errors",
     )
-    footer(
-        fig,
-        "R² on a 20% hold-out set, per MSOA  ·  worst-fit areas have far fewer sales and much larger % errors  ·  "
-        "Boundaries: ONS MSOA 2021  ·  EPSG:27700",
-    )
-    out = IMAGE_DIR / "rf_full_features_msoa_r2_map.png"
+    footer(fig, "R² on a 20% hold-out set, per MSOA  ·  sales = hold-out sales scored per area")
+    out = IMAGE_DIR / "rf_full_features_msoa_r2_comparison.png"
     fig.savefig(out, dpi=220, bbox_inches="tight")
     plt.close(fig)
     return out
@@ -304,34 +332,22 @@ def _fmt_p(p):
     return "p < 0.001" if p < 0.001 else f"p = {p:.3f}"
 
 
-def _scatter(ax, x, y, name, yfmt=lambda v, _: f"£{v/1000:.0f}k"):
+def _scatter(ax, x, y, name, yfmt=lambda v, _: f"£{v/1000:.0f}k", show_stats=True):
     r, p = pearsonr(x, y)
     ax.scatter(x, y, s=34, color=POS, alpha=0.75, edgecolor="white", linewidth=0.6, zorder=3)
     slope, intercept = np.polyfit(x, y, 1)
     xs = np.linspace(x.min(), x.max(), 50)
     ax.plot(xs, slope * xs + intercept, color=INK, lw=1.4, ls="--", zorder=4)
     ax.set_title(name, fontsize=12.5, fontweight="bold", color=INK, pad=8, loc="left")
-    ax.text(
-        0.04,
-        0.14,
-        f"r = {r:+.2f}",
-        transform=ax.transAxes,
-        fontsize=11,
-        fontweight="bold",
-        color=NEG if r < 0 else POS,
-        ha="left",
-        va="bottom",
-    )
-    ax.text(
-        0.04,
-        0.05,
-        _fmt_p(p) + ("" if p < 0.05 else "  (n.s.)"),
-        transform=ax.transAxes,
-        fontsize=9.5,
-        color=INK_2 if p < 0.05 else MUTED,
-        ha="left",
-        va="bottom",
-    )
+    if show_stats:
+        ax.text(
+            0.04, 0.14, f"r = {r:+.2f}", transform=ax.transAxes, fontsize=11,
+            fontweight="bold", color=NEG if r < 0 else POS, ha="left", va="bottom",
+        )
+        ax.text(
+            0.04, 0.05, _fmt_p(p) + ("" if p < 0.05 else "  (n.s.)"), transform=ax.transAxes,
+            fontsize=9.5, color=INK_2 if p < 0.05 else MUTED, ha="left", va="bottom",
+        )
     ax.set_facecolor(SURFACE)
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)
@@ -412,15 +428,36 @@ def fig_diversity_vs_price(per):
     return out
 
 
+def _r_p_table(ax, rows, title):
+    """Small, uncoloured r / p comparison table. rows = [(label, r, p), ...]."""
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.axis("off")
+    ax.set_title(title, fontsize=12.5, fontweight="bold", color=INK, pad=8, loc="left")
+    xr, xp = 0.72, 1.0
+    ax.text(0.0, 0.9, "Feature", fontsize=9.5, color=MUTED, ha="left", va="center")
+    ax.text(xr, 0.9, "r", fontsize=9.5, color=MUTED, ha="right", va="center")
+    ax.text(xp, 0.9, "p", fontsize=9.5, color=MUTED, ha="right", va="center")
+    ax.plot([0, 1], [0.83, 0.83], color=GRID, lw=1)
+    y = 0.68
+    for label, r, pval in rows:
+        ax.text(0.0, y, label, fontsize=10.5, color=INK, ha="left", va="center")
+        ax.text(xr, y, f"{r:+.2f}", fontsize=10.5, color=INK, ha="right", va="center")
+        ptxt = "<0.001" if pval < 0.001 else f"{pval:.3f}"
+        ax.text(xp, y, ptxt, fontsize=10.5, color=INK_2, ha="right", va="center")
+        y -= 0.15
+
+
 # --- figure 3: diversity vs model fit (per-MSOA R2) -----------------------------
 def fig_diversity_vs_r2(per, r2):
     p = per.copy()
     p["r2"] = p.index.map(r2)
     p = p[p["r2"].notna()]
     names = list(SIMPSON_BLOCKS)
-    corr = {n: float(np.corrcoef(p[n], p["r2"])[0, 1]) for n in names}
-    order = sorted(names, key=lambda n: abs(corr[n]), reverse=True)
-    n_r = float(np.corrcoef(p["n_sales"], p["r2"])[0, 1])
+    r2v = p["r2"].to_numpy(float)
+    stats = {n: pearsonr(p[n].to_numpy(float), r2v) for n in names}  # (r, p)
+    order = sorted(names, key=lambda n: abs(stats[n][0]), reverse=True)
+    n_stat = pearsonr(p["n_sales"].to_numpy(float), r2v)
 
     fig = plt.figure(figsize=(14, 8.6))
     fig.patch.set_facecolor(SURFACE)
@@ -428,24 +465,17 @@ def fig_diversity_vs_r2(per, r2):
         2, 3, figure=fig, left=0.065, right=0.975, top=0.84, bottom=0.10, hspace=0.42, wspace=0.28
     )
 
-    r2v = p["r2"].to_numpy()
     yfmt = lambda v, _: f"{v:.2f}"  # noqa: E731
     for i, name in enumerate(order):
         ax = fig.add_subplot(gs[i // 3, i % 3])
-        _scatter(ax, p[name].to_numpy(), r2v, name, yfmt=yfmt)
+        _scatter(ax, p[name].to_numpy(), r2v, name, yfmt=yfmt, show_stats=False)
         if i % 3 == 0:
             ax.set_ylabel("Test R²", fontsize=10, color=INK_2)
         ax.set_xlabel("Simpson diversity  (0 = uniform, 1 = mixed)", fontsize=9.5, color=INK_2)
 
     ax = fig.add_subplot(gs[1, 2])
-    _corr_summary_bar(
-        ax,
-        order[::-1],
-        [corr[n] for n in order[::-1]],
-        ref_label="Sales per area (n)",
-        ref_val=n_r,
-        title="Correlation with model R²",
-    )
+    table_rows = [(n, stats[n][0], stats[n][1]) for n in order]
+    _r_p_table(ax, table_rows, "Correlation with model R²")
 
     title_block(
         fig,
@@ -455,8 +485,8 @@ def fig_diversity_vs_r2(per, r2):
     )
     footer(
         fig,
-        "Test R² per MSOA (full features + Cambridge/London distance, 43 areas)  ·  Pearson r  ·  "
-        f"orange = number of sales, the real driver of fit (r={n_r:+.2f})",
+        "Test R² per MSOA (full features + Cambridge/London distance, 43 areas)  ·  Pearson r & p  ·  "
+        f"no block is significant — the real driver of fit is sample size (r={n_stat[0]:+.2f})",
     )
     out = IMAGE_DIR / "msoa_diversity_vs_model_fit.png"
     fig.savefig(out, dpi=220, bbox_inches="tight")
@@ -680,6 +710,66 @@ def fig_ptype_diversity_vs_r2(table, names):
     return out
 
 
+# --- figure: per-region duplication rate vs model fit ---------------------------
+def fig_duplication_vs_r2(df, table, names):
+    dup = df.duplicated(keep="first")
+    rate = df.assign(_d=dup.values).groupby("msoa21")["_d"].mean() * 100.0
+    d = pd.DataFrame({"dup_rate": rate}).join(table[["r2_price", "n_test"]]).dropna()
+    d["name"] = names.reindex(d.index).fillna(pd.Series(d.index, index=d.index))
+    x = d["dup_rate"].to_numpy(float)
+    y = d["r2_price"].to_numpy(float)
+    r, p = pearsonr(x, y)
+    pr = _partial_r(x, y, d["n_test"].to_numpy(float))
+
+    order = d.sort_values("r2_price")
+    worst3 = set(order.head(3).index)
+    best3 = set(order.tail(3).index)
+
+    fig, ax = plt.subplots(figsize=(10.5, 7.2))
+    fig.patch.set_facecolor(SURFACE)
+    ax.set_facecolor(SURFACE)
+    fig.subplots_adjust(left=0.09, right=0.965, top=0.82, bottom=0.11)
+
+    colors = [BAD if i in worst3 else GOOD if i in best3 else POS for i in d.index]
+    ax.scatter(x, y, s=62, c=colors, alpha=0.82, edgecolor="white", linewidth=0.7, zorder=3)
+    slope, intercept = np.polyfit(x, y, 1)
+    xs = np.linspace(x.min(), x.max(), 50)
+    ax.plot(xs, slope * xs + intercept, color=INK, lw=1.6, ls="--", zorder=4)
+
+    ax.text(0.03, 0.95, f"r = {r:+.2f}", transform=ax.transAxes, fontsize=14,
+            fontweight="bold", color=POS if r >= 0 else NEG, va="top")
+    ax.text(0.03, 0.885, _fmt_p(p) + ("" if p < 0.05 else "  (n.s.)"),
+            transform=ax.transAxes, fontsize=11, color=INK_2, va="top")
+    ax.text(0.03, 0.825, f"controlling for sales count:  r = {pr:+.2f}",
+            transform=ax.transAxes, fontsize=10.5, color=MUTED, va="top")
+
+    ax.set_xlabel("Exact-duplicate rate  (% of an area's sales)", fontsize=11.5, color=INK_2)
+    ax.set_ylabel("Test R²", fontsize=11.5, color=INK_2)
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:.0f}%"))
+    _bare(ax)
+    ax.grid(True, color=GRID, lw=0.6, alpha=0.6, zorder=0)
+    ax.legend(
+        handles=[Patch(color=GOOD, label="best-fit 3"), Patch(color=BAD, label="worst-fit 3"),
+                 Patch(color=POS, label="other areas")],
+        loc="lower right", frameon=False, fontsize=9.5, labelcolor=INK_2,
+    )
+
+    title_block(
+        fig,
+        "Duplication Inflates the Model's Score",
+        "areas with more exact-duplicate sales score higher test R²  ·  a sign of train/test leakage",
+    )
+    footer(
+        fig,
+        "43 MSOAs  ·  Pearson r vs R²  ·  stays strong (partial r=+0.47) after controlling for sales count  ·  "
+        "identical rows split across train & test let the model memorise, inflating R²",
+    )
+    out = IMAGE_DIR / "msoa_duplication_vs_r2.png"
+    fig.savefig(out, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
 # --- figure 7: each area as a point in the sales x diversity plane, coloured by R2
 # red-grey-blue ramp: keeps low-R2 points visible (they read warm, not washed out)
 FIT_RAMP = LinearSegmentedColormap.from_list(
@@ -704,12 +794,13 @@ def fig_fit_by_sales_diversity(table, names):
     sc = ax.scatter(x, y, c=r2, cmap=FIT_RAMP, norm=norm, s=190,
                     edgecolor="white", linewidth=1.1, zorder=3)
 
-    # label the two lowest-R2 areas (clearly the reddest), offset to avoid overlap
-    worst = d.sort_values("r2_price").head(2)
+    # label the three lowest-R2 areas (the reddest), offset to avoid overlap
+    worst = d.sort_values("r2_price").head(3)
+    offs = [(14, 12), (14, -16), (16, 30)]  # Eddington, Milton, Barrington
     halo = [path_effects.withStroke(linewidth=2.6, foreground=SURFACE)]
     for k, (_, row) in enumerate(worst.iterrows()):
         ax.annotate(f"{row['name']}  (R² {row['r2_price']:.2f})",
-                    (row["n_test"], row["shannon_entropy"]), xytext=(12, 12 if k == 0 else -16),
+                    (row["n_test"], row["shannon_entropy"]), xytext=offs[k],
                     textcoords="offset points", fontsize=9, color="#8f1d13", fontweight="bold",
                     ha="left", va="center", path_effects=halo,
                     arrowprops=dict(arrowstyle="-", color="#8f1d13", lw=1))
@@ -747,11 +838,13 @@ def main():
 
     outputs = [
         fig_r2_map(gdf, table, names),
+        fig_r2_comparison(table, names),
         fig_diversity_vs_price(per),
         fig_diversity_vs_r2(per, table["r2_price"]),
         fig_sales_vs_r2(table, names),
         fig_gini_importance_rank(),
         fig_ptype_diversity_vs_r2(table, names),
+        fig_duplication_vs_r2(df, table, names),
         fig_fit_by_sales_diversity(table, names),
     ]
     for out in outputs:
