@@ -162,6 +162,15 @@ def simpson_index(block):
     return (1 - (p ** 2).sum(axis=1)) / (1 - 1 / k)
 
 
+def shannon_index(block):
+    """Shannon entropy, normalised to [0, 1] (H / ln K), on row-summed proportions."""
+    p = block.div(block.sum(axis=1), axis=0).to_numpy(float)
+    k = p.shape[1]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        terms = np.where(p > 0, p * np.log(p), 0.0)
+    return pd.Series(-terms.sum(axis=1) / np.log(k), index=block.index)
+
+
 def per_msoa_diversity(df):
     """One row per MSOA: median price plus the five Simpson diversity indices."""
     per = df.groupby("msoa21").first()
@@ -462,10 +471,11 @@ def fig_diversity_vs_r2(per, r2):
     p = per.copy()
     p["r2"] = p.index.map(r2)
     p = p[p["r2"].notna()]
-    names = list(SIMPSON_BLOCKS)
     r2v = p["r2"].to_numpy(float)
-    stats = {n: pearsonr(p[n].to_numpy(float), r2v) for n in names}  # (r, p)
-    order = sorted(names, key=lambda n: abs(stats[n][0]), reverse=True)
+    # Shannon diversity per block (normalised 0-1), for consistency with the deck
+    shan = {n: shannon_index(p[cols]).to_numpy(float) for n, cols in SIMPSON_BLOCKS.items()}
+    order = ["Ethnicity", "Age", "Education", "Commute distance", "Commute method"]
+    stats = {n: pearsonr(shan[n], r2v) for n in order}  # (r, p)
     n_stat = pearsonr(p["n_sales"].to_numpy(float), r2v)
 
     fig = plt.figure(figsize=(14, 8.6))
@@ -477,10 +487,10 @@ def fig_diversity_vs_r2(per, r2):
     yfmt = lambda v, _: f"{v:.2f}"  # noqa: E731
     for i, name in enumerate(order):
         ax = fig.add_subplot(gs[i // 3, i % 3])
-        _scatter(ax, p[name].to_numpy(), r2v, name, yfmt=yfmt, show_stats=False)
+        _scatter(ax, shan[name], r2v, name, yfmt=yfmt, show_stats=False)
         if i % 3 == 0:
             ax.set_ylabel("Test R²", fontsize=10, color=INK_2)
-        ax.set_xlabel("Simpson diversity  (0 = uniform, 1 = mixed)", fontsize=9.5, color=INK_2)
+        ax.set_xlabel("Shannon diversity", fontsize=9.5, color=INK_2)
 
     ax = fig.add_subplot(gs[1, 2])
     table_rows = [(n, stats[n][0], stats[n][1]) for n in order]
@@ -489,7 +499,7 @@ def fig_diversity_vs_r2(per, r2):
     title_block(
         fig,
         "Does Diversity Explain Where the Model Struggles?",
-        "Simpson diversity of each social block vs the model's test R² per MSOA  ·  "
+        "Shannon diversity of each social block vs the model's test R² per MSOA  ·  "
         "no block explains the fit — sample size does",
     )
     footer(
