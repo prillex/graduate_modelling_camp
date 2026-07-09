@@ -215,55 +215,64 @@ def fig_r2_map(gdf, table, names):
     best3 = order.head(3)
     worst3 = order.tail(3).iloc[::-1]  # worst first
 
-    fig = plt.figure(figsize=(12.5, 15.4))
+    # size the figure to the region's own aspect ratio so there is no dead space
+    minx, miny, maxx, maxy = g.total_bounds
+    data_ar = (maxy - miny) / (maxx - minx)
+    fig_w, map_x0, map_wf = 12.5, 0.14, 0.85
+    top_in, bot_in = 1.6, 0.55
+    map_h_in = map_wf * fig_w * data_ar
+    fig_h = map_h_in + top_in + bot_in
+    map_y0, map_hf = bot_in / fig_h, map_h_in / fig_h
+
+    fig = plt.figure(figsize=(fig_w, fig_h))
     fig.patch.set_facecolor(SURFACE)
-    ax = fig.add_axes([0.13, 0.325, 0.85, 0.60])
+    ax = fig.add_axes([map_x0, map_y0, map_wf, map_hf])
     norm = Normalize(g["r2"].min(), g["r2"].max())
     g.plot(ax=ax, column="r2", cmap=BLUE_RAMP, norm=norm, linewidth=0.6, edgecolor="white")
     ax.set_axis_off()
+    ax.set_xlim(minx, maxx)
+    ax.set_ylim(miny, maxy)
     ax.set_aspect("equal")
 
     best3.plot(ax=ax, facecolor="none", edgecolor=GOOD, linewidth=2.8, zorder=5)
     worst3.plot(ax=ax, facecolor="none", edgecolor=BAD, linewidth=2.8, zorder=5)
 
-    # label the 6 highlighted areas, pushed radially outward to avoid the centre
+    # label the 6 highlighted areas, pushed radially outward to avoid the centre;
+    # Eddington is nudged to the top-left so it clears the Isaac Newton star
     halo = [path_effects.withStroke(linewidth=3, foreground=SURFACE)]
-    minx, miny, maxx, maxy = g.total_bounds
     mx, my = (minx + maxx) / 2, (miny + maxy) / 2
     for rank_set, color in ((best3, GOOD), (worst3, BAD)):
         for rank, (_, row) in enumerate(rank_set.iterrows(), start=1):
-            vx, vy = row["cx"] - mx, row["cy"] - my
-            dist = np.hypot(vx, vy) or 1.0
-            ux, uy = vx / dist, vy / dist
-            off = 82
+            if "Eddington" in row["name"]:
+                off_pt, ha, va = (-118, 82), "right", "center"
+            else:
+                vx, vy = row["cx"] - mx, row["cy"] - my
+                dist = np.hypot(vx, vy) or 1.0
+                ux, uy = vx / dist, vy / dist
+                off_pt = (ux * 82, uy * 82)
+                ha, va = ("left" if ux >= 0 else "right"), ("bottom" if uy >= 0 else "top")
             ax.plot(row["cx"], row["cy"], "o", ms=6, mfc=color, mec="white", mew=1.1, zorder=9)
             ax.annotate(
-                f"{rank}. {row['name']}",
-                (row["cx"], row["cy"]),
-                xytext=(ux * off, uy * off),
-                textcoords="offset points",
-                ha="left" if ux >= 0 else "right",
-                va="bottom" if uy >= 0 else "top",
-                fontsize=11,
-                fontweight="bold",
-                color=color,
-                zorder=10,
+                f"{rank}. {row['name']}", (row["cx"], row["cy"]),
+                xytext=off_pt, textcoords="offset points", ha=ha, va=va,
+                fontsize=11, fontweight="bold", color=color, zorder=10,
                 path_effects=halo,
                 arrowprops=dict(arrowstyle="-", color=color, lw=1.1, shrinkA=0, shrinkB=6),
             )
 
-    # Isaac Newton Institute — the headline landmark, "where we are now"
+    # Isaac Newton Institute — the headline landmark, "where we are"; points down-right
     newton = _project([("Isaac Newton Institute", 52.2109, 0.0985)]).geometry.iloc[0]
     ax.plot(newton.x, newton.y, marker="*", ms=28, mfc=STAR, mec="white", mew=1.7, zorder=11)
     ax.annotate(
         "Isaac Newton Institute\n(where we are)", (newton.x, newton.y),
-        xytext=(14, 58), textcoords="offset points", ha="left", va="center",
+        xytext=(74, -66), textcoords="offset points", ha="left", va="center",
         fontsize=11.5, fontweight="bold", color=STAR, zorder=12, path_effects=halo,
         arrowprops=dict(arrowstyle="-", color=STAR, lw=1.3, shrinkA=0, shrinkB=9),
     )
 
-    # vertical colorbar on the left
-    cax = fig.add_axes([0.055, 0.33, 0.026, 0.40])
+    # vertical colorbar on the left, centred against the map
+    cax_hf = 0.46 * map_hf
+    cax = fig.add_axes([0.055, map_y0 + (map_hf - cax_hf) / 2, 0.026, cax_hf])
     cb = fig.colorbar(plt.cm.ScalarMappable(cmap=BLUE_RAMP, norm=norm), cax=cax, orientation="vertical")
     cb.set_label("Test R²  (price scale)", color=INK, fontsize=12.5, fontweight="bold")
     cb.outline.set_visible(False)
@@ -710,13 +719,17 @@ def fig_ptype_diversity_vs_r2(table, names):
     return out
 
 
-# --- figure: per-region duplication rate vs model fit ---------------------------
+# --- figure: repeat price & room-type sales vs model fit ------------------------
+SHARED_KEYS = ["price_sold", "property_type", "num_bed_", "num_bath", "num_reception"]
+
+
 def fig_duplication_vs_r2(df, table, names):
-    dup = df.duplicated(keep="first")
-    rate = df.assign(_d=dup.values).groupby("msoa21")["_d"].mean() * 100.0
-    d = pd.DataFrame({"dup_rate": rate}).join(table[["r2_price", "n_test"]]).dropna()
+    # separate sales that share an identical price + room-type profile with another
+    shared = df.groupby(SHARED_KEYS)["price_sold"].transform("size") >= 2
+    cnt = df.assign(_s=shared.values).groupby("msoa21")["_s"].sum()
+    d = pd.DataFrame({"shared": cnt}).join(table[["r2_price", "n_test"]]).dropna()
     d["name"] = names.reindex(d.index).fillna(pd.Series(d.index, index=d.index))
-    x = d["dup_rate"].to_numpy(float)
+    x = d["shared"].to_numpy(float)
     y = d["r2_price"].to_numpy(float)
     r, p = pearsonr(x, y)
     pr = _partial_r(x, y, d["n_test"].to_numpy(float))
@@ -728,7 +741,7 @@ def fig_duplication_vs_r2(df, table, names):
     fig, ax = plt.subplots(figsize=(10.5, 7.2))
     fig.patch.set_facecolor(SURFACE)
     ax.set_facecolor(SURFACE)
-    fig.subplots_adjust(left=0.09, right=0.965, top=0.82, bottom=0.11)
+    fig.subplots_adjust(left=0.10, right=0.965, top=0.82, bottom=0.11)
 
     colors = [BAD if i in worst3 else GOOD if i in best3 else POS for i in d.index]
     ax.scatter(x, y, s=62, c=colors, alpha=0.82, edgecolor="white", linewidth=0.7, zorder=3)
@@ -740,12 +753,10 @@ def fig_duplication_vs_r2(df, table, names):
             fontweight="bold", color=POS if r >= 0 else NEG, va="top")
     ax.text(0.03, 0.885, _fmt_p(p) + ("" if p < 0.05 else "  (n.s.)"),
             transform=ax.transAxes, fontsize=11, color=INK_2, va="top")
-    ax.text(0.03, 0.825, f"controlling for sales count:  r = {pr:+.2f}",
-            transform=ax.transAxes, fontsize=10.5, color=MUTED, va="top")
 
-    ax.set_xlabel("Exact-duplicate rate  (% of an area's sales)", fontsize=11.5, color=INK_2)
+    ax.set_xlabel("Sales sharing an identical price & room type  (count)", fontsize=11.5, color=INK_2)
     ax.set_ylabel("Test R²", fontsize=11.5, color=INK_2)
-    ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:.0f}%"))
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:,.0f}"))
     _bare(ax)
     ax.grid(True, color=GRID, lw=0.6, alpha=0.6, zorder=0)
     ax.legend(
@@ -756,13 +767,15 @@ def fig_duplication_vs_r2(df, table, names):
 
     title_block(
         fig,
-        "Duplication Inflates the Model's Score",
-        "areas with more exact-duplicate sales score higher test R²  ·  a sign of train/test leakage",
+        "Repeat Price & Room-type Sales vs Model Fit",
+        "count of separate sales that share an identical price and room type vs test R²  ·  "
+        "different buyers, not data errors",
     )
     footer(
         fig,
-        "43 MSOAs  ·  Pearson r vs R²  ·  stays strong (partial r=+0.47) after controlling for sales count  ·  "
-        "identical rows split across train & test let the model memorise, inflating R²",
+        "43 MSOAs  ·  Pearson r vs R²  ·  these areas are mostly just the larger, more liquid ones "
+        f"(r={pr:+.2f} once sales count is held fixed)  ·  identical price+room rows split across train & "
+        "test still let the model memorise",
     )
     out = IMAGE_DIR / "msoa_duplication_vs_r2.png"
     fig.savefig(out, dpi=220, bbox_inches="tight")
